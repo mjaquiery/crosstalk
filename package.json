@@ -1,0 +1,16 @@
+{
+  "name": "crosstalk",
+  "version": "1.0.0",
+  "description": "A videochat application for playing game theory games together.",
+  "main": "server.js",
+  "scripts": {
+    "test": "test",
+    "serve": "node server.js"
+  },
+  "author": "Matt Jaquiery",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.1",
+    "socket.io": "^4.5.1"
+  }
+}
