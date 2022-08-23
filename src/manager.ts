@@ -1,4 +1,5 @@
 import {Socket, Server} from 'socket.io'
+const log4js = require("log4js")
 
 const stage_delay: number = 1000
 
@@ -29,7 +30,22 @@ type GameState = {
     decision_labels: [DecisionLabel, DecisionLabel],
     moves: Move[],
     payoffs: Payoff[],
-    resultString: string
+    resultString: string,
+    number?: number,
+    timestamp: number
+}
+
+type ClientPlayer = {
+    index: number,
+    score: number,
+    you: boolean,
+    name: string
+}
+
+type ClientGameState = {
+    players: ClientPlayer[],
+    game: GameState | null,
+    game_count: number
 }
 
 
@@ -128,22 +144,40 @@ class Manager {
     private server: Server
     players: Player[]
     games: Game[]
+    id: string
+    logger
     private messages: Message[]
     private videos: Video[]
 
-
     constructor(server: Server) {
-        console.debug(`Manger initialized.`)
         this.server = server
         this.players = []
         this.games = []
         this.messages = []
         this.videos = []
+        this.id = `game_${new Date().getTime().toString()}`
+
+        log4js.configure({
+            appenders: {
+                ...log4js.appenders,
+                [this.id]: {
+                    type: "file",
+                    filename: `${process.env.GAME_LOG}/${this.id}.log`,
+                    // layout: { type: "basic" }
+                }
+            },
+            categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
+        });
+
+        const logger = log4js.getLogger(this.id);
+        logger.level = log4js.DEBUG
+        this.logger = logger
+        this.logger.debug(`Manger initialized.`)
     }
 
     add_player(socket: Socket) {
         if(this.players.length === 2) {
-            console.error(`Refusing to allow ${socket.id} to join: too many players.`)
+            this.logger.error(`Refusing to allow ${socket.id} to join: too many players.`)
             socket.emit('error', "Too many players!")
         }
 
@@ -153,7 +187,7 @@ class Manager {
             existing_player.socket = socket
         } else {
             this.players.push(player)
-            console.debug(`${player.name} joined [${player.id}]`)
+            this.logger.debug(`${player.name} joined [${player.id}]`)
             socket.on('leave', () => setTimeout(
                 (manager, player) => manager.remove_player(player), stage_delay, this, player))
             socket.on('disconnect', () => setTimeout(
@@ -169,7 +203,7 @@ class Manager {
     remove_player(player: Player) {
         if(this.getPlayerById(player.id)) {
             this.players = this.players.filter(p => p.id !== player.id)
-            console.debug(`Player ${player.name} left [${player.id}]`)
+            this.logger.debug(`Player ${player.name} left [${player.id}]`)
             this.broadcast()
         }
     }
@@ -212,10 +246,9 @@ class Manager {
 
     /**
      * Game state view for a player, redacted as necessary
-     * @param player
      */
-    get_game_state(player: Player) {
-        const manager = this
+    get_game_state(player: Player, log: boolean = false): ClientGameState {
+        const manager: Manager = this
         let players
         let game
 
@@ -256,10 +289,22 @@ class Manager {
         }
     }
 
+    log_game_state() {
+        if(this.current_game instanceof Game) {
+            this.logger.info("<< Broadcast game state >>")
+            this.logger.info(this.current_game.state)
+            this.logger.info(this.players)
+            this.logger.info("<< Broadcast ends >>")
+        } else {
+            this.logger.info("<< Broadcast game state >>")
+            this.logger.info("No game currently active")
+            this.logger.info(this.players)
+            this.logger.info("<< Broadcast ends >>")
+        }
+    }
+
     broadcast() {
-        // console.debug(this.game_state)
-        console.debug("Broadcast gamestate!")
-        const self: Manager = this
+        this.log_game_state()
         for(let p of this.players) {
             // redact gamestate if necessary
             p.socket.emit('gameStateUpdate', JSON.stringify(this.get_game_state(p)))
@@ -373,7 +418,7 @@ class Game extends ManagerComponent {
                 // Set up move listeners for the sockets
                 function do_move(move) {
                     function reject(socket: Socket, error: string) {
-                        console.error(`Socket ${socket.id} error: ${error}`)
+                        game._manager.logger.error(`Socket ${socket.id} error: ${error}`)
                         socket.emit('error', error)
                         socket.once('makeMove', do_move)
                     }
@@ -389,7 +434,7 @@ class Game extends ManagerComponent {
                         return reject(this, "That is not a valid move.")
                     }
                     // Record move
-                    console.debug(`New move: ${new_move.player_index} selects '${new_move.label.text}' [${new_move.index}]`)
+                    game._manager.logger.debug(`New move: ${new_move.player_index} selects '${new_move.label.text}' [${new_move.index}]`)
                     game.moves.push(new_move)
                     // If both players have moved, proceed
                     if(game.moves.length === 2) {
@@ -421,12 +466,12 @@ class Game extends ManagerComponent {
                     ]
                 game.payoffs = payoffs.payoffs
                 game.resultString = payoffs.resultString(...game._manager.players)
-                console.debug(`${game.resultString} [P1=${game.payoffs[0].value}, P2=${game.payoffs[1].value}]`)
+                game._manager.logger.debug(`${game.resultString} [P1=${game.payoffs[0].value}, P2=${game.payoffs[1].value}]`)
                 game.moves.forEach(m => {
                     const p = game._manager.getPlayerByIndex(m.player_index)
                     p.score += game.payoffs[p.index].value
                 })
-                // setTimeout(game => game.advance_stage(), stage_delay_long, game)
+                // setTimeout(game => game.advance_stage(), stage_delay, game)
             }
         },
         {
@@ -451,7 +496,7 @@ class Game extends ManagerComponent {
         for(const r of this.rules) {
             rules[r.name] = r.values[this.stage]
         }
-        return {
+        return  {
             name: this.name,
             description: this.description,
             prompt: this.prompt,
@@ -460,7 +505,8 @@ class Game extends ManagerComponent {
             decision_labels: this.decision_labels,
             moves: this.moves,
             payoffs: this.payoffs,
-            resultString: this.resultString
+            resultString: this.resultString,
+            timestamp: new Date().getTime()
         }
     }
 
@@ -482,13 +528,13 @@ class Game extends ManagerComponent {
         }
 
         if(!new_stage) {
-            console.debug(`No next stage found from ${this.stage}`)
+            this._manager.logger.debug(`No next stage found from ${this.stage}`)
         }
 
-        console.debug(`Stage ${this.stage} -> ${new_stage}`)
+        this._manager.logger.debug(`Stage ${this.stage} -> ${new_stage}`)
         let hooks = this.hooks.filter(h => h.stage === this.stage && h.when === "post")
         if(hooks.length) {
-            console.debug(`Executing ${hooks.length} hooked functions for post_${this.stage}`)
+            this._manager.logger.debug(`Executing ${hooks.length} hooked functions for post_${this.stage}`)
             hooks.forEach(h => h.fun(this, h.context_arg))
         }
         this.stage = new_stage
@@ -496,12 +542,12 @@ class Game extends ManagerComponent {
         // Execute hooked functions
         hooks = this.hooks.filter(h => h.stage === this.stage && h.when === "pre")
         if(hooks.length) {
-            console.debug(`Executing ${hooks.length} hooked functions for pre_${this.stage}`)
+            this._manager.logger.debug(`Executing ${hooks.length} hooked functions for pre_${this.stage}`)
             hooks.forEach(h => h.fun(this, h.context_arg))
         }
         hooks = this.hooks.filter(h => h.stage === this.stage && !h.when)
         if(hooks.length) {
-            console.debug(`Executing ${hooks.length} hooked functions for ${this.stage}`)
+            this._manager.logger.debug(`Executing ${hooks.length} hooked functions for ${this.stage}`)
             hooks.forEach(h => h.fun(this, h.context_arg))
         }
         this._manager.broadcast()

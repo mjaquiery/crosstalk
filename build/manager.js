@@ -26,6 +26,7 @@ var __assign = (this && this.__assign) || function () {
     return __assign.apply(this, arguments);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+var log4js = require("log4js");
 var stage_delay = 1000;
 var GameStage;
 (function (GameStage) {
@@ -106,17 +107,30 @@ var GameRule = /** @class */ (function () {
 }());
 var Manager = /** @class */ (function () {
     function Manager(server) {
-        console.debug("Manger initialized.");
+        var _a;
         this.server = server;
         this.players = [];
         this.games = [];
         this.messages = [];
         this.videos = [];
+        this.id = "game_" + new Date().getTime().toString();
+        log4js.configure({
+            appenders: __assign(__assign({}, log4js.appenders), (_a = {}, _a[this.id] = {
+                type: "file",
+                filename: process.env.GAME_LOG + "/" + this.id,
+                // layout: { type: "basic" }
+            }, _a)),
+            categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
+        });
+        var logger = log4js.getLogger(this.id);
+        logger.level = log4js.DEBUG;
+        this.logger = logger;
+        this.logger.debug("Manger initialized.");
     }
     Manager.prototype.add_player = function (socket) {
         var _this = this;
         if (this.players.length === 2) {
-            console.error("Refusing to allow " + socket.id + " to join: too many players.");
+            this.logger.error("Refusing to allow " + socket.id + " to join: too many players.");
             socket.emit('error', "Too many players!");
         }
         var player = new Player(this, { socket: socket, index: this.players.length });
@@ -126,7 +140,7 @@ var Manager = /** @class */ (function () {
         }
         else {
             this.players.push(player);
-            console.debug(player.name + " joined [" + player.id + "]");
+            this.logger.debug(player.name + " joined [" + player.id + "]");
             socket.on('leave', function () { return setTimeout(function (manager, player) { return manager.remove_player(player); }, stage_delay, _this, player); });
             socket.on('disconnect', function () { return setTimeout(function (manager, player) { return manager.remove_player(player); }, stage_delay, _this, player); });
         }
@@ -138,7 +152,7 @@ var Manager = /** @class */ (function () {
     Manager.prototype.remove_player = function (player) {
         if (this.getPlayerById(player.id)) {
             this.players = this.players.filter(function (p) { return p.id !== player.id; });
-            console.debug("Player " + player.name + " left [" + player.id + "]");
+            this.logger.debug("Player " + player.name + " left [" + player.id + "]");
             this.broadcast();
         }
     };
@@ -185,10 +199,10 @@ var Manager = /** @class */ (function () {
     };
     /**
      * Game state view for a player, redacted as necessary
-     * @param player
      */
-    Manager.prototype.get_game_state = function (player) {
+    Manager.prototype.get_game_state = function (player, log) {
         var _a;
+        if (log === void 0) { log = false; }
         var manager = this;
         var players;
         var game;
@@ -223,10 +237,22 @@ var Manager = /** @class */ (function () {
             game_count: this.games.length
         };
     };
+    Manager.prototype.log_game_state = function () {
+        if (this.current_game instanceof Game) {
+            this.logger.info("<< Broadcast game state >>");
+            this.logger.info(this.current_game.state);
+            this.logger.info(this.players);
+            this.logger.info("<< Broadcast ends >>");
+        }
+        else {
+            this.logger.info("<< Broadcast game state >>");
+            this.logger.info("No game currently active");
+            this.logger.info(this.players);
+            this.logger.info("<< Broadcast ends >>");
+        }
+    };
     Manager.prototype.broadcast = function () {
-        // console.debug(this.game_state)
-        console.debug("Broadcast gamestate!");
-        var self = this;
+        this.log_game_state();
         for (var _i = 0, _a = this.players; _i < _a.length; _i++) {
             var p = _a[_i];
             // redact gamestate if necessary
@@ -345,7 +371,7 @@ var Game = /** @class */ (function (_super) {
                     function do_move(move) {
                         var _this = this;
                         function reject(socket, error) {
-                            console.error("Socket " + socket.id + " error: " + error);
+                            game._manager.logger.error("Socket " + socket.id + " error: " + error);
                             socket.emit('error', error);
                             socket.once('makeMove', do_move);
                         }
@@ -362,7 +388,7 @@ var Game = /** @class */ (function (_super) {
                             return reject(this, "That is not a valid move.");
                         }
                         // Record move
-                        console.debug("New move: " + new_move.player_index + " selects '" + new_move.label.text + "' [" + new_move.index + "]");
+                        game._manager.logger.debug("New move: " + new_move.player_index + " selects '" + new_move.label.text + "' [" + new_move.index + "]");
                         game.moves.push(new_move);
                         // If both players have moved, proceed
                         if (game.moves.length === 2) {
@@ -389,12 +415,12 @@ var Game = /** @class */ (function (_super) {
                     var payoffs = game.payoff_matrix[game.moves.find(function (m) { return game._manager.getPlayerByIndex(m.player_index).index === 1; }).index][game.moves.find(function (m) { return game._manager.getPlayerByIndex(m.player_index).index === 0; }).index];
                     game.payoffs = payoffs.payoffs;
                     game.resultString = payoffs.resultString.apply(payoffs, game._manager.players);
-                    console.debug(game.resultString + " [P1=" + game.payoffs[0].value + ", P2=" + game.payoffs[1].value + "]");
+                    game._manager.logger.debug(game.resultString + " [P1=" + game.payoffs[0].value + ", P2=" + game.payoffs[1].value + "]");
                     game.moves.forEach(function (m) {
                         var p = game._manager.getPlayerByIndex(m.player_index);
                         p.score += game.payoffs[p.index].value;
                     });
-                    // setTimeout(game => game.advance_stage(), stage_delay_long, game)
+                    // setTimeout(game => game.advance_stage(), stage_delay, game)
                 }
             },
             {
@@ -427,7 +453,8 @@ var Game = /** @class */ (function (_super) {
                 decision_labels: this.decision_labels,
                 moves: this.moves,
                 payoffs: this.payoffs,
-                resultString: this.resultString
+                resultString: this.resultString,
+                timestamp: new Date().getTime()
             };
         },
         enumerable: false,
@@ -453,24 +480,24 @@ var Game = /** @class */ (function (_super) {
             new_stage = force_stage;
         }
         if (!new_stage) {
-            console.debug("No next stage found from " + this.stage);
+            this._manager.logger.debug("No next stage found from " + this.stage);
         }
-        console.debug("Stage " + this.stage + " -> " + new_stage);
+        this._manager.logger.debug("Stage " + this.stage + " -> " + new_stage);
         var hooks = this.hooks.filter(function (h) { return h.stage === _this.stage && h.when === "post"; });
         if (hooks.length) {
-            console.debug("Executing " + hooks.length + " hooked functions for post_" + this.stage);
+            this._manager.logger.debug("Executing " + hooks.length + " hooked functions for post_" + this.stage);
             hooks.forEach(function (h) { return h.fun(_this, h.context_arg); });
         }
         this.stage = new_stage;
         // Execute hooked functions
         hooks = this.hooks.filter(function (h) { return h.stage === _this.stage && h.when === "pre"; });
         if (hooks.length) {
-            console.debug("Executing " + hooks.length + " hooked functions for pre_" + this.stage);
+            this._manager.logger.debug("Executing " + hooks.length + " hooked functions for pre_" + this.stage);
             hooks.forEach(function (h) { return h.fun(_this, h.context_arg); });
         }
         hooks = this.hooks.filter(function (h) { return h.stage === _this.stage && !h.when; });
         if (hooks.length) {
-            console.debug("Executing " + hooks.length + " hooked functions for " + this.stage);
+            this._manager.logger.debug("Executing " + hooks.length + " hooked functions for " + this.stage);
             hooks.forEach(function (h) { return h.fun(_this, h.context_arg); });
         }
         this._manager.broadcast();

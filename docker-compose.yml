@@ -1,0 +1,33 @@
+version: '3.7'
+
+services:
+
+  rtc:
+    image: 'openvidu/openvidu-server-kms:2.22.0'
+    environment:
+      - "OPENVIDU_SECRET=MY_SECRET_KEY_123"
+      - "OPENVIDU_RECORDING=true"
+      - "OPENVIDU_RECORDING_PATH=/recordings"
+
+    ports:
+      - "4443:4443"
+
+    volumes:
+      - .:/crosstalk
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.data/recordings:/recordings
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"  # game
+      - "5000:5000"  # video
+    environment:
+      - "OPENVIDU_URL=https://rtc:4443/"
+      - "OPENVIDU_SECRET=MY_SECRET_KEY_123"
+      - "GAME_LOG=/game_logs"
+    volumes:
+      - .:/app
+      - ./.data/game_logs:/game_logs
+    depends_on:
+      - rtc

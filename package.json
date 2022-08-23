@@ -11,6 +11,11 @@
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.1",
-    "socket.io": "^4.5.1"
+    "socket.io": "^4.5.1",
+    "body-parser": "1.20.0",
+    "ejs": "3.1.6",
+    "express-session": "1.17.1",
+    "openvidu-node-client": "2.22.0",
+    "log4js": "6.6.1"
   }
 }
