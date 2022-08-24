@@ -117,7 +117,7 @@ var Manager = /** @class */ (function () {
         log4js.configure({
             appenders: __assign(__assign({}, log4js.appenders), (_a = {}, _a[this.id] = {
                 type: "file",
-                filename: process.env.GAME_LOG + "/" + this.id,
+                filename: process.env.GAME_LOG + "/" + this.id + ".log",
                 // layout: { type: "basic" }
             }, _a)),
             categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
@@ -284,12 +284,8 @@ var Player = /** @class */ (function (_super) {
         var _this = _super.call(this, manager) || this;
         _this.score = 0;
         _this.index = 0;
-        var session_id = props.socket.handshake.headers.cookie
-            .split(';')
-            .map(function (x) { return x.split('='); })
-            .find(function (x) { return x[0].match("^ *sessionid$"); })[1];
         _this.socket = props.socket;
-        _this._id = session_id;
+        _this._id = props.socket.id;
         _this.index = props.index ? 1 : 0;
         _this._name = "Player " + (_this.index + 1);
         return _this;

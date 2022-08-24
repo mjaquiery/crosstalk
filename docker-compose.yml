@@ -8,6 +8,7 @@ services:
       - "OPENVIDU_SECRET=MY_SECRET_KEY_123"
       - "OPENVIDU_RECORDING=true"
       - "OPENVIDU_RECORDING_PATH=/recordings"
+      - "DOMAIN_OR_PUBLIC_IP=192.168.0.84"
 
     ports:
       - "4443:4443"
@@ -23,7 +24,7 @@ services:
       - "3000:3000"  # game
       - "5000:5000"  # video
     environment:
-      - "OPENVIDU_URL=https://rtc:4443/"
+      - "OPENVIDU_URL=https://192.168.0.84:4443/"
       - "OPENVIDU_SECRET=MY_SECRET_KEY_123"
       - "GAME_LOG=/game_logs"
     volumes:

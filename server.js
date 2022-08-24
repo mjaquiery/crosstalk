@@ -1,20 +1,35 @@
 let { Manager, Game } = new require('./build/manager')
 let manager
-let app = require('express')()
-let http = require('http').Server(app)
-let io = require('socket.io')(http, {
-    cors: {
-        origin: "http://localhost:8080",
-        methods: ["GET", "POST"],
-        credentials: true
-    },
-    allowEIO3: true
-})
 
-http.listen(3000, () => {
+const express = require('express');
+const session = require('express-session');
+const fs = require('fs');
+const cors = require('cors');
+const https = require('https');
+const socketIO = require("socket.io");
+
+const origins = ["https://localhost:8080", "https://192.168.0.84:8080"]
+const corsOptions = {
+    origin: origins,
+    credentials: true
+};
+const sshOptions = {
+    key: fs.readFileSync('openvidukey.pem'),
+    cert: fs.readFileSync('openviducert.pem')
+};
+
+const http = https.createServer(sshOptions, express()).listen(3000, () => {
     console.log('Listening on port *:3000')
-})
+});
 
+const io = new socketIO.Server(http, {
+    cors: corsOptions,
+    allowEIO3: true,
+    cookie: {
+        sameSite: "none",
+        secure: true
+    }
+})
 
 function new_manger(game_count = 5) {
     const manager = new Manager(io)
@@ -93,20 +108,19 @@ function new_manger(game_count = 5) {
 }
 
 io.on('connection', (socket) => {
+    try {
+        console.log(`New connection: ${socket.id}`)
+        try {console.debug(`Current manager player count: ${manager.payers.length}`)}
+        catch (e) {console.debug(`Creating new manager`)}
 
-    session = socket.handshake.headers.cookie
-        .split(';')
-        .map(x => x.split('='))
-        .find(x => x[0].match("^ *sessionid$"))[1]
-    console.log(`New connection: ${socket.id} [${session}]`)
-    try {console.debug(`Current manager player count: ${manager.payers.length}`)}
-    catch (e) {console.debug(`Creating new manager`)}
-
-    if(typeof manager === 'undefined' || manager.players.length === 2) {
-        manager = new_manger()
+        if(typeof manager === 'undefined' || manager.players.length === 2) {
+            manager = new_manger()
+        }
+        manager.add_player(socket)
+    } catch (e) {
+        console.debug({headers: socket.handshake.headers})
+        console.error(e)
     }
-    manager.add_player(socket)
-
 });
 
 /* Video channel */
@@ -128,17 +142,8 @@ const OPENVIDU_SECRET = process.env.OPENVIDU_SECRET;
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
 
 // Node imports
-let express = require('express');
-let fs = require('fs');
-let session = require('express-session');
-let https = require('https');
 let bodyParser = require('body-parser'); // Pull information from HTML POST (express4)
 let video_app = express(); // Create our app with express
-const cors = require('cors');
-const corsOptions = {
-    origin: 'http://localhost:8080',
-    credentials: true
-};
 
 // Server configuration
 video_app.use(session({
@@ -163,11 +168,7 @@ video_app.use(bodyParser.json({
 video_app.set('view engine', 'ejs'); // Embedded JavaScript as template engine
 
 // Listen (start app with node server.js)
-const options = {
-    key: fs.readFileSync('openvidukey.pem'),
-    cert: fs.readFileSync('openviducert.pem')
-};
-https.createServer(options, video_app).listen(5000, () => {
+https.createServer(sshOptions, video_app).listen(5000, () => {
     console.log('Video server listening on port *:5000')
 });
 
@@ -266,6 +267,8 @@ video_app.post('/api/session', (req, res) => {
             mySession.createConnection(connectionProperties)
                 .then(connection => {
 
+                    console.debug({connection})
+
                     // Store the new token in the collection of tokens
                     mapSessionNamesTokens[sessionName].push(connection.token);
 
@@ -296,6 +299,7 @@ video_app.post('/api/session', (req, res) => {
                 }
             })
                 .then(session => {
+                    console.debug({session})
                     // Store the new Session in the collection of Sessions
                     mapSessions[sessionName] = session;
                     // Store a new empty array in the collection of tokens
@@ -304,6 +308,8 @@ video_app.post('/api/session', (req, res) => {
                     // Generate a new token asynchronously with the recently created connectionProperties
                     session.createConnection(connectionProperties)
                         .then(connection => {
+
+                            console.debug({connection})
 
                             // Store the new token in the collection of tokens
                             mapSessionNamesTokens[sessionName].push(connection.token);

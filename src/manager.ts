@@ -339,12 +339,8 @@ class Player extends ManagerComponent {
 
     constructor(manager: Manager, props: {socket: Socket, index: number}) {
         super(manager);
-        const session_id = props.socket.handshake.headers.cookie
-            .split(';')
-            .map(x => x.split('='))
-            .find(x => x[0].match("^ *sessionid$"))[1]
         this.socket = props.socket
-        this._id = session_id
+        this._id = props.socket.id
         this.index = props.index? 1 : 0
         this._name = `Player ${this.index + 1}`
     }
