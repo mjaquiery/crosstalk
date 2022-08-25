@@ -26,6 +26,7 @@ var __assign = (this && this.__assign) || function () {
     return __assign.apply(this, arguments);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+var openvidu_node_client_1 = require("openvidu-node-client");
 var log4js = require("log4js");
 var stage_delay = 1000;
 var GameStage;
@@ -112,7 +113,6 @@ var Manager = /** @class */ (function () {
         this.players = [];
         this.games = [];
         this.messages = [];
-        this.videos = [];
         this.id = "game_" + new Date().getTime().toString();
         log4js.configure({
             appenders: __assign(__assign({}, log4js.appenders), (_a = {}, _a[this.id] = {
@@ -124,11 +124,13 @@ var Manager = /** @class */ (function () {
         });
         var logger = log4js.getLogger(this.id);
         logger.level = log4js.DEBUG;
-        this.logger = logger;
+        this.logger = console; // logger
         this.logger.debug("Manger initialized.");
+        this.videoManager = new VideoManager(this);
     }
     Manager.prototype.add_player = function (socket) {
         var _this = this;
+        var self = this;
         if (this.players.length === 2) {
             this.logger.error("Refusing to allow " + socket.id + " to join: too many players.");
             socket.emit('error', "Too many players!");
@@ -143,6 +145,8 @@ var Manager = /** @class */ (function () {
             this.logger.debug(player.name + " joined [" + player.id + "]");
             socket.on('leave', function () { return setTimeout(function (manager, player) { return manager.remove_player(player); }, stage_delay, _this, player); });
             socket.on('disconnect', function () { return setTimeout(function (manager, player) { return manager.remove_player(player); }, stage_delay, _this, player); });
+            this.videoManager.get_token(player)
+                .then(function () { return self.broadcast(); });
         }
         if (this.players.length === 2) {
             this.next_game();
@@ -200,9 +204,8 @@ var Manager = /** @class */ (function () {
     /**
      * Game state view for a player, redacted as necessary
      */
-    Manager.prototype.get_game_state = function (player, log) {
+    Manager.prototype.get_game_state = function (player) {
         var _a;
-        if (log === void 0) { log = false; }
         var manager = this;
         var players;
         var game;
@@ -231,23 +234,31 @@ var Manager = /** @class */ (function () {
                 return { index: p.index, name: p.name, you: p === player, score: p.score };
             });
         }
+        var ov = this.videoManager.connections.find(function (c) { return c.player === player; });
+        var ov_token = null;
+        if (ov) {
+            ov_token = ov.connection.token;
+        }
         return {
             players: players,
             game: game,
-            game_count: this.games.length
+            game_count: this.games.length,
+            ov_token: ov_token
         };
     };
     Manager.prototype.log_game_state = function () {
         if (this.current_game instanceof Game) {
             this.logger.info("<< Broadcast game state >>");
-            this.logger.info(this.current_game.state);
-            this.logger.info(this.players);
+            this.logger.info(this.current_game.loggable);
+            this.logger.info(this.players.map(function (p) { return p.loggable; }));
+            this.logger.info(this.videoManager.loggable);
             this.logger.info("<< Broadcast ends >>");
         }
         else {
             this.logger.info("<< Broadcast game state >>");
             this.logger.info("No game currently active");
-            this.logger.info(this.players);
+            this.logger.info(this.players.map(function (p) { return p.loggable; }));
+            this.logger.info(this.videoManager.loggable);
             this.logger.info("<< Broadcast ends >>");
         }
     };
@@ -276,6 +287,11 @@ var ManagerComponent = /** @class */ (function () {
         enumerable: false,
         configurable: true
     });
+    Object.defineProperty(ManagerComponent.prototype, "loggable", {
+        get: function () { return this.state ? this.state : this; },
+        enumerable: false,
+        configurable: true
+    });
     return ManagerComponent;
 }());
 var Player = /** @class */ (function (_super) {
@@ -300,6 +316,13 @@ var Player = /** @class */ (function (_super) {
         get: function () { return this._name; },
         set: function (new_name) {
             this._name = new_name;
+        },
+        enumerable: false,
+        configurable: true
+    });
+    Object.defineProperty(Player.prototype, "loggable", {
+        get: function () {
+            return __assign(__assign({}, this), { socket: this.socket.id });
         },
         enumerable: false,
         configurable: true
@@ -522,12 +545,74 @@ var Message = /** @class */ (function (_super) {
     }
     return Message;
 }(ManagerComponent));
-var Video = /** @class */ (function (_super) {
-    __extends(Video, _super);
-    function Video() {
-        return _super !== null && _super.apply(this, arguments) || this;
+var VideoManager = /** @class */ (function (_super) {
+    __extends(VideoManager, _super);
+    function VideoManager(manager) {
+        var _this = _super.call(this, manager) || this;
+        _this.connections = [];
+        _this.ov_session_props = {
+            customSessionId: manager.id,
+            recordingMode: openvidu_node_client_1.RecordingMode.ALWAYS,
+            defaultRecordingProperties: {
+                outputMode: openvidu_node_client_1.Recording.OutputMode.INDIVIDUAL
+            }
+        };
+        _this.ov_connection_props = {
+            role: openvidu_node_client_1.OpenViduRole.PUBLISHER
+        };
+        var self = _this;
+        _this.ov = new openvidu_node_client_1.OpenVidu(process.env.OPENVIDU_URL, process.env.OPENVIDU_SECRET);
+        _this.ov.createSession(_this.ov_session_props)
+            .then(function (session) { return self.ov_session = session; })
+            .catch(function (err) { return self._manager.logger.error(err); });
+        return _this;
     }
-    return Video;
+    VideoManager.prototype.get_token = function (player) {
+        var _this = this;
+        var self = this;
+        // Handle connection requests where session not yet initialized
+        if (!this.ov_session) {
+            this._manager.logger.debug("Delaying generation of ov_token for " + player.id + " due to uninitalized session.");
+            return new Promise(function (resolve, reject) {
+                setTimeout(function () {
+                    _this.get_token(player).then(resolve).catch(reject);
+                }, 50, self);
+            });
+        }
+        var conn = this.connections.find(function (c) { return c.player === player; });
+        if (!conn) {
+            return this.ov_session.createConnection(__assign(__assign({}, self.ov_connection_props), { data: JSON.stringify({ id: player.id, index: player.index }) }))
+                .then(function (connection) {
+                self.connections.push({ player: player, connection: connection });
+                return connection.token;
+            })
+                .catch(function (err) {
+                self._manager.logger.error(err);
+                return null;
+            });
+        }
+        else {
+            return new Promise(function (resolve) { return resolve(conn.connection.token); });
+        }
+    };
+    Object.defineProperty(VideoManager.prototype, "loggable", {
+        get: function () {
+            return {
+                connections: this.connections.map(function (c) {
+                    return {
+                        player_index: c.player.index,
+                        player_id: c.player.id,
+                        connection_id: c.connection.connectionId,
+                        connection_status: c.connection.status,
+                        connection_token: c.connection.token
+                    };
+                })
+            };
+        },
+        enumerable: false,
+        configurable: true
+    });
+    return VideoManager;
 }(ManagerComponent));
 module.exports = { Manager: Manager, Game: Game, GameRules: GameRules };
 //# sourceMappingURL=manager.js.map

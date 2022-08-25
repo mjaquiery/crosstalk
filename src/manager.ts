@@ -1,4 +1,15 @@
-import {Socket, Server} from 'socket.io'
+import {Server, Socket} from 'socket.io'
+import {
+    Connection,
+    ConnectionProperties,
+    OpenVidu,
+    OpenViduRole,
+    Recording,
+    RecordingMode,
+    Session,
+    SessionProperties
+} from "openvidu-node-client";
+
 const log4js = require("log4js")
 
 const stage_delay: number = 1000
@@ -45,7 +56,8 @@ type ClientPlayer = {
 type ClientGameState = {
     players: ClientPlayer[],
     game: GameState | null,
-    game_count: number
+    game_count: number,
+    ov_token: string|null
 }
 
 
@@ -147,14 +159,13 @@ class Manager {
     id: string
     logger
     private messages: Message[]
-    private videos: Video[]
+    private videoManager: VideoManager
 
     constructor(server: Server) {
         this.server = server
         this.players = []
         this.games = []
         this.messages = []
-        this.videos = []
         this.id = `game_${new Date().getTime().toString()}`
 
         log4js.configure({
@@ -171,11 +182,14 @@ class Manager {
 
         const logger = log4js.getLogger(this.id);
         logger.level = log4js.DEBUG
-        this.logger = logger
+        this.logger = console // logger
         this.logger.debug(`Manger initialized.`)
+
+        this.videoManager = new VideoManager(this)
     }
 
     add_player(socket: Socket) {
+        const self = this
         if(this.players.length === 2) {
             this.logger.error(`Refusing to allow ${socket.id} to join: too many players.`)
             socket.emit('error', "Too many players!")
@@ -192,6 +206,8 @@ class Manager {
                 (manager, player) => manager.remove_player(player), stage_delay, this, player))
             socket.on('disconnect', () => setTimeout(
                 (manager, player) => manager.remove_player(player), stage_delay, this, player))
+            this.videoManager.get_token(player)
+                .then(() => self.broadcast())
         }
 
         if(this.players.length === 2) {
@@ -247,7 +263,7 @@ class Manager {
     /**
      * Game state view for a player, redacted as necessary
      */
-    get_game_state(player: Player, log: boolean = false): ClientGameState {
+    get_game_state(player: Player): ClientGameState {
         const manager: Manager = this
         let players
         let game
@@ -282,23 +298,31 @@ class Manager {
                 return {index: p.index, name: p.name, you: p === player, score: p.score}
             })
         }
+        const ov = this.videoManager.connections.find(c => c.player === player)
+        let ov_token: string|null = null
+        if(ov) {
+            ov_token = ov.connection.token
+        }
         return {
             players,
             game,
-            game_count: this.games.length
+            game_count: this.games.length,
+            ov_token
         }
     }
 
     log_game_state() {
         if(this.current_game instanceof Game) {
             this.logger.info("<< Broadcast game state >>")
-            this.logger.info(this.current_game.state)
-            this.logger.info(this.players)
+            this.logger.info(this.current_game.loggable)
+            this.logger.info(this.players.map(p => p.loggable))
+            this.logger.info(this.videoManager.loggable)
             this.logger.info("<< Broadcast ends >>")
         } else {
             this.logger.info("<< Broadcast game state >>")
             this.logger.info("No game currently active")
-            this.logger.info(this.players)
+            this.logger.info(this.players.map(p => p.loggable))
+            this.logger.info(this.videoManager.loggable)
             this.logger.info("<< Broadcast ends >>")
         }
     }
@@ -328,6 +352,8 @@ class ManagerComponent {
     }
 
     get state() { return null }
+
+    get loggable(): any { return this.state? this.state : this }
 }
 
 class Player extends ManagerComponent {
@@ -351,6 +377,13 @@ class Player extends ManagerComponent {
     get name() { return this._name }
     set name(new_name: string) {
         this._name = new_name
+    }
+
+    get loggable() {
+        return {
+            ...this,
+            socket: this.socket.id,
+        }
     }
 }
 
@@ -566,8 +599,77 @@ class Message extends ManagerComponent {
 
 }
 
-class Video extends ManagerComponent {
+class VideoManager extends ManagerComponent {
+    public ov: OpenVidu
+    public ov_session: Session
+    public connections: { player: Player, connection: Connection }[]
+    readonly ov_session_props: SessionProperties
+    readonly ov_connection_props: ConnectionProperties
 
+    constructor(manager: Manager) {
+        super(manager);
+
+        this.connections = []
+        this.ov_session_props = {
+            customSessionId: manager.id,
+            recordingMode: RecordingMode.ALWAYS,
+            defaultRecordingProperties: {
+                outputMode: Recording.OutputMode.INDIVIDUAL
+            }
+        }
+        this.ov_connection_props = {
+            role: OpenViduRole.PUBLISHER
+        }
+        const self = this
+        this.ov = new OpenVidu(process.env.OPENVIDU_URL, process.env.OPENVIDU_SECRET)
+        this.ov.createSession(this.ov_session_props)
+            .then(session => self.ov_session = session)
+            .catch(err => self._manager.logger.error(err))
+    }
+
+    get_token(player: Player): Promise<string|null> {
+        const self = this
+        // Handle connection requests where session not yet initialized
+        if(!this.ov_session) {
+            this._manager.logger.debug(`Delaying generation of ov_token for ${player.id} due to uninitalized session.`)
+            return new Promise((resolve, reject) => {
+                setTimeout(() => {
+                    this.get_token(player).then(resolve).catch(reject)
+                }, 50, self)
+            })
+        }
+        let conn = this.connections.find(c => c.player === player)
+        if(!conn) {
+            return this.ov_session.createConnection({
+                ...self.ov_connection_props,
+                data: JSON.stringify({id: player.id, index: player.index})
+            })
+                .then(connection => {
+                    self.connections.push({player, connection})
+                    return connection.token
+                })
+                .catch(err => {
+                    self._manager.logger.error(err)
+                    return null
+                })
+        } else {
+            return new Promise(resolve => resolve(conn.connection.token))
+        }
+    }
+
+    get loggable() {
+        return {
+            connections: this.connections.map(c => {
+                return {
+                    player_index: c.player.index,
+                    player_id: c.player.id,
+                    connection_id: c.connection.connectionId,
+                    connection_status: c.connection.status,
+                    connection_token: c.connection.token
+                }
+            })
+        }
+    }
 }
 
 module.exports = { Manager, Game, GameRules }
