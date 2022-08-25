@@ -178,10 +178,6 @@ const users = [{
     pass: "pass",
     role: OpenViduRole.PUBLISHER
 }, {
-    user: "publisher2",
-    pass: "pass",
-    role: OpenViduRole.PUBLISHER
-}, {
     user: "subscriber",
     pass: "pass",
     role: OpenViduRole.SUBSCRIBER
@@ -532,9 +528,13 @@ video_app.post('/leave-session', (req, res) => {
 /* AUXILIARY METHODS */
 
 function login(user, pass) {
-    return (user != null &&
-        pass != null &&
-        users.find(u => (u.user === user) && (u.pass === pass)));
+    if(user && pass && users.find(u => u.user === user && u.pass === pass))
+        return true
+    if(/^publisher[0-9]{2}$/.test(user) && pass === 'pass') {
+        users.push({user, pass, role: OpenViduRole.PUBLISHER})
+        return true
+    }
+    return false
 }
 
 function isLogged(session) {
