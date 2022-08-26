@@ -14,11 +14,11 @@ var Chat = /** @class */ (function () {
         }
         this._store = store.Chat;
         this._socket.on('joined', function (user) {
-            console.log("User " + user + " connected.");
+            console.log("User ".concat(user, " connected."));
             _this._socket.emit('joined', user);
         });
         this._socket.on('leave', function (user) {
-            console.log("User " + user + " left.");
+            console.log("User ".concat(user, " left."));
             _this._socket.broadcast.emit('leave', user);
         });
         this._socket.on('disconnect', function () {

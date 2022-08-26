@@ -13,6 +13,7 @@ import {
 const log4js = require("log4js")
 
 const stage_delay: number = 1000
+const player_timeout_delay: number = 60000
 
 type DecisionLabel = {
     text: string,
@@ -157,16 +158,18 @@ class Manager {
     players: Player[]
     games: Game[]
     id: string
+    name: string
     logger
     private messages: Message[]
     private videoManager: VideoManager
 
-    constructor(server: Server) {
+    constructor(server: Server, room_name: string = "game") {
         this.server = server
         this.players = []
         this.games = []
         this.messages = []
-        this.id = `game_${new Date().getTime().toString()}`
+        this.id = `${room_name}_${new Date().getTime().toString()}`
+        this.name = room_name
 
         log4js.configure({
             appenders: {
@@ -188,26 +191,39 @@ class Manager {
         this.videoManager = new VideoManager(this)
     }
 
-    add_player(socket: Socket) {
+    add_player(socket: Socket, network_token: string) {
         const self = this
         if(this.players.length === 2) {
-            this.logger.error(`Refusing to allow ${socket.id} to join: too many players.`)
-            socket.emit('error', "Too many players!")
+            this.logger.error(`Refusing to allow ${network_token} to join: too many players.`)
+            throw new Error("Too many players!")
         }
 
-        const player = new Player(this, {socket, index: this.players.length})
+        const player = new Player(this, {socket, network_token, index: this.players.length})
         const existing_player = this.players.find(p => p.id === player.id)
         if(existing_player) {
+            this.logger.debug(`Refreshing socket for ${player.name} [${player.index}]`)
             existing_player.socket = socket
         } else {
+            this.logger.debug(`Accepted new player: ${player.name} [${player.index}]`)
             this.players.push(player)
             this.logger.debug(`${player.name} joined [${player.id}]`)
             socket.on('leave', () => setTimeout(
-                (manager, player) => manager.remove_player(player), stage_delay, this, player))
+                (manager, player, socket) => manager.remove_player(player, socket),
+                player_timeout_delay,
+                this,
+                player,
+                socket
+            ))
             socket.on('disconnect', () => setTimeout(
-                (manager, player) => manager.remove_player(player), stage_delay, this, player))
+                (manager, player, socket) => manager.remove_player(player, socket),
+                player_timeout_delay,
+                this,
+                player,
+                socket
+            ))
             this.videoManager.get_token(player)
                 .then(() => self.broadcast())
+                .catch(err => self.logger.error(err))
         }
 
         if(this.players.length === 2) {
@@ -216,8 +232,12 @@ class Manager {
         this.broadcast()
     }
 
-    remove_player(player: Player) {
+    remove_player(player: Player, socket: Socket) {
         if(this.getPlayerById(player.id)) {
+            if(player.socket !== socket) {
+                // Player already relogged on
+                return
+            }
             this.players = this.players.filter(p => p.id !== player.id)
             this.logger.debug(`Player ${player.name} left [${player.id}]`)
             this.broadcast()
@@ -313,13 +333,13 @@ class Manager {
 
     log_game_state() {
         if(this.current_game instanceof Game) {
-            this.logger.info("<< Broadcast game state >>")
+            this.logger.info(`<< [${this.id}] Broadcast game state >>`)
             this.logger.info(this.current_game.loggable)
             this.logger.info(this.players.map(p => p.loggable))
             this.logger.info(this.videoManager.loggable)
             this.logger.info("<< Broadcast ends >>")
         } else {
-            this.logger.info("<< Broadcast game state >>")
+            this.logger.info(`<< [${this.id}] Broadcast game state >>`)
             this.logger.info("No game currently active")
             this.logger.info(this.players.map(p => p.loggable))
             this.logger.info(this.videoManager.loggable)
@@ -327,7 +347,7 @@ class Manager {
         }
     }
 
-    broadcast() {
+    broadcast(): void {
         this.log_game_state()
         for(let p of this.players) {
             // redact gamestate if necessary
@@ -341,6 +361,10 @@ class Manager {
 
     getPlayerByIndex(index: number): Player {
         return this.players.find(p => p.index === index)
+    }
+
+    get is_open(): boolean {
+        return this.players.length < 2
     }
 }
 
@@ -361,18 +385,17 @@ class Player extends ManagerComponent {
     public score: number = 0
     readonly index: number = 0
     private _name: string
-    private _id: string
+    private readonly _id: string
 
-    constructor(manager: Manager, props: {socket: Socket, index: number}) {
+    constructor(manager: Manager, props: {socket: Socket, network_token: string, index: number}) {
         super(manager);
         this.socket = props.socket
-        this._id = props.socket.id
+        this._id = props.network_token
         this.index = props.index? 1 : 0
         this._name = `Player ${this.index + 1}`
     }
 
     get id() { return this._id }
-    set id(new_id) { this._id = new_id }
 
     get name() { return this._name }
     set name(new_name: string) {
@@ -611,7 +634,7 @@ class VideoManager extends ManagerComponent {
 
         this.connections = []
         this.ov_session_props = {
-            customSessionId: manager.id,
+            customSessionId: `${manager.id}_video`,
             recordingMode: RecordingMode.ALWAYS,
             defaultRecordingProperties: {
                 outputMode: Recording.OutputMode.INDIVIDUAL
@@ -624,18 +647,27 @@ class VideoManager extends ManagerComponent {
         this.ov = new OpenVidu(process.env.OPENVIDU_URL, process.env.OPENVIDU_SECRET)
         this.ov.createSession(this.ov_session_props)
             .then(session => self.ov_session = session)
-            .catch(err => self._manager.logger.error(err))
+            .then(() => self._manager.logger.info(self.ov_session))
+            .catch(err => {
+                self._manager.logger.error("Unable to connect to OpenVidu server.")
+                throw new Error(err)
+            })
     }
 
-    get_token(player: Player): Promise<string|null> {
+    get_token(player: Player, i: number = 0): Promise<string|null> {
         const self = this
         // Handle connection requests where session not yet initialized
         if(!this.ov_session) {
-            this._manager.logger.debug(`Delaying generation of ov_token for ${player.id} due to uninitalized session.`)
+            this._manager.logger.debug(`Delaying generation of ov_token for ${player.id} due to uninitalized session [${i}]`)
             return new Promise((resolve, reject) => {
+                const retry_delay = 50
+                const max_delay = 5000
+                if(i * retry_delay > max_delay) {
+                    return reject(`ov_token generation timed out after ${max_delay}ms.`)
+                }
                 setTimeout(() => {
-                    this.get_token(player).then(resolve).catch(reject)
-                }, 50, self)
+                    this.get_token(player, i + 1).then(resolve).catch(reject)
+                }, retry_delay, self)
             })
         }
         let conn = this.connections.find(c => c.player === player)
@@ -672,4 +704,4 @@ class VideoManager extends ManagerComponent {
     }
 }
 
-module.exports = { Manager, Game, GameRules }
+export { Manager, Game, GameRules }

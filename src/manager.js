@@ -26,9 +26,11 @@ var __assign = (this && this.__assign) || function () {
     return __assign.apply(this, arguments);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.GameRules = exports.Game = exports.Manager = void 0;
 var openvidu_node_client_1 = require("openvidu-node-client");
 var log4js = require("log4js");
 var stage_delay = 1000;
+var player_timeout_delay = 60000;
 var GameStage;
 (function (GameStage) {
     GameStage["Pre_begin"] = "Pre-begin";
@@ -59,6 +61,7 @@ var GameRules;
     GameRules["show_partner_payoff"] = "show partner payoff";
     GameRules["show_partner_score"] = "show partner score";
 })(GameRules || (GameRules = {}));
+exports.GameRules = GameRules;
 var GameRule = /** @class */ (function () {
     /**
      * A Rule maps GameStages to EnabledStatuses.
@@ -107,17 +110,19 @@ var GameRule = /** @class */ (function () {
     return GameRule;
 }());
 var Manager = /** @class */ (function () {
-    function Manager(server) {
+    function Manager(server, room_name) {
         var _a;
+        if (room_name === void 0) { room_name = "game"; }
         this.server = server;
         this.players = [];
         this.games = [];
         this.messages = [];
-        this.id = "game_" + new Date().getTime().toString();
+        this.id = "".concat(room_name, "_").concat(new Date().getTime().toString());
+        this.name = room_name;
         log4js.configure({
             appenders: __assign(__assign({}, log4js.appenders), (_a = {}, _a[this.id] = {
                 type: "file",
-                filename: process.env.GAME_LOG + "/" + this.id + ".log",
+                filename: "".concat(process.env.GAME_LOG, "/").concat(this.id, ".log"),
                 // layout: { type: "basic" }
             }, _a)),
             categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
@@ -128,35 +133,42 @@ var Manager = /** @class */ (function () {
         this.logger.debug("Manger initialized.");
         this.videoManager = new VideoManager(this);
     }
-    Manager.prototype.add_player = function (socket) {
+    Manager.prototype.add_player = function (socket, network_token) {
         var _this = this;
         var self = this;
         if (this.players.length === 2) {
-            this.logger.error("Refusing to allow " + socket.id + " to join: too many players.");
-            socket.emit('error', "Too many players!");
+            this.logger.error("Refusing to allow ".concat(network_token, " to join: too many players."));
+            throw new Error("Too many players!");
         }
-        var player = new Player(this, { socket: socket, index: this.players.length });
+        var player = new Player(this, { socket: socket, network_token: network_token, index: this.players.length });
         var existing_player = this.players.find(function (p) { return p.id === player.id; });
         if (existing_player) {
+            this.logger.debug("Refreshing socket for ".concat(player.name, " [").concat(player.index, "]"));
             existing_player.socket = socket;
         }
         else {
+            this.logger.debug("Accepted new player: ".concat(player.name, " [").concat(player.index, "]"));
             this.players.push(player);
-            this.logger.debug(player.name + " joined [" + player.id + "]");
-            socket.on('leave', function () { return setTimeout(function (manager, player) { return manager.remove_player(player); }, stage_delay, _this, player); });
-            socket.on('disconnect', function () { return setTimeout(function (manager, player) { return manager.remove_player(player); }, stage_delay, _this, player); });
+            this.logger.debug("".concat(player.name, " joined [").concat(player.id, "]"));
+            socket.on('leave', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, player_timeout_delay, _this, player, socket); });
+            socket.on('disconnect', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, player_timeout_delay, _this, player, socket); });
             this.videoManager.get_token(player)
-                .then(function () { return self.broadcast(); });
+                .then(function () { return self.broadcast(); })
+                .catch(function (err) { return self.logger.error(err); });
         }
         if (this.players.length === 2) {
             this.next_game();
         }
         this.broadcast();
     };
-    Manager.prototype.remove_player = function (player) {
+    Manager.prototype.remove_player = function (player, socket) {
         if (this.getPlayerById(player.id)) {
+            if (player.socket !== socket) {
+                // Player already relogged on
+                return;
+            }
             this.players = this.players.filter(function (p) { return p.id !== player.id; });
-            this.logger.debug("Player " + player.name + " left [" + player.id + "]");
+            this.logger.debug("Player ".concat(player.name, " left [").concat(player.id, "]"));
             this.broadcast();
         }
     };
@@ -184,7 +196,7 @@ var Manager = /** @class */ (function () {
             var i = this.games.indexOf(this.current_game) + 1;
             this.current_game.active = false;
             if (this.games.length > i) {
-                console.debug("Starting game " + i);
+                console.debug("Starting game ".concat(i));
                 this.games[i].active = true;
             }
         }
@@ -193,11 +205,11 @@ var Manager = /** @class */ (function () {
             this.games[0].active = true;
         }
         if (this.current_game instanceof Game) {
-            console.debug("Starting game " + this.current_game.name);
+            console.debug("Starting game ".concat(this.current_game.name));
             this.current_game.advance_stage(GameStage.Pre_begin);
         }
         else {
-            console.debug("All " + this.games.length + " game(s) complete.");
+            console.debug("All ".concat(this.games.length, " game(s) complete."));
             this.broadcast();
         }
     };
@@ -248,14 +260,14 @@ var Manager = /** @class */ (function () {
     };
     Manager.prototype.log_game_state = function () {
         if (this.current_game instanceof Game) {
-            this.logger.info("<< Broadcast game state >>");
+            this.logger.info("<< [".concat(this.id, "] Broadcast game state >>"));
             this.logger.info(this.current_game.loggable);
             this.logger.info(this.players.map(function (p) { return p.loggable; }));
             this.logger.info(this.videoManager.loggable);
             this.logger.info("<< Broadcast ends >>");
         }
         else {
-            this.logger.info("<< Broadcast game state >>");
+            this.logger.info("<< [".concat(this.id, "] Broadcast game state >>"));
             this.logger.info("No game currently active");
             this.logger.info(this.players.map(function (p) { return p.loggable; }));
             this.logger.info(this.videoManager.loggable);
@@ -276,8 +288,16 @@ var Manager = /** @class */ (function () {
     Manager.prototype.getPlayerByIndex = function (index) {
         return this.players.find(function (p) { return p.index === index; });
     };
+    Object.defineProperty(Manager.prototype, "is_open", {
+        get: function () {
+            return this.players.length < 2;
+        },
+        enumerable: false,
+        configurable: true
+    });
     return Manager;
 }());
+exports.Manager = Manager;
 var ManagerComponent = /** @class */ (function () {
     function ManagerComponent(manager) {
         this._manager = manager;
@@ -301,14 +321,13 @@ var Player = /** @class */ (function (_super) {
         _this.score = 0;
         _this.index = 0;
         _this.socket = props.socket;
-        _this._id = props.socket.id;
+        _this._id = props.network_token;
         _this.index = props.index ? 1 : 0;
-        _this._name = "Player " + (_this.index + 1);
+        _this._name = "Player ".concat(_this.index + 1);
         return _this;
     }
     Object.defineProperty(Player.prototype, "id", {
         get: function () { return this._id; },
-        set: function (new_id) { this._id = new_id; },
         enumerable: false,
         configurable: true
     });
@@ -390,7 +409,7 @@ var Game = /** @class */ (function (_super) {
                     function do_move(move) {
                         var _this = this;
                         function reject(socket, error) {
-                            game._manager.logger.error("Socket " + socket.id + " error: " + error);
+                            game._manager.logger.error("Socket ".concat(socket.id, " error: ").concat(error));
                             socket.emit('error', error);
                             socket.once('makeMove', do_move);
                         }
@@ -407,7 +426,7 @@ var Game = /** @class */ (function (_super) {
                             return reject(this, "That is not a valid move.");
                         }
                         // Record move
-                        game._manager.logger.debug("New move: " + new_move.player_index + " selects '" + new_move.label.text + "' [" + new_move.index + "]");
+                        game._manager.logger.debug("New move: ".concat(new_move.player_index, " selects '").concat(new_move.label.text, "' [").concat(new_move.index, "]"));
                         game.moves.push(new_move);
                         // If both players have moved, proceed
                         if (game.moves.length === 2) {
@@ -434,7 +453,7 @@ var Game = /** @class */ (function (_super) {
                     var payoffs = game.payoff_matrix[game.moves.find(function (m) { return game._manager.getPlayerByIndex(m.player_index).index === 1; }).index][game.moves.find(function (m) { return game._manager.getPlayerByIndex(m.player_index).index === 0; }).index];
                     game.payoffs = payoffs.payoffs;
                     game.resultString = payoffs.resultString.apply(payoffs, game._manager.players);
-                    game._manager.logger.debug(game.resultString + " [P1=" + game.payoffs[0].value + ", P2=" + game.payoffs[1].value + "]");
+                    game._manager.logger.debug("".concat(game.resultString, " [P1=").concat(game.payoffs[0].value, ", P2=").concat(game.payoffs[1].value, "]"));
                     game.moves.forEach(function (m) {
                         var p = game._manager.getPlayerByIndex(m.player_index);
                         p.score += game.payoffs[p.index].value;
@@ -499,24 +518,24 @@ var Game = /** @class */ (function (_super) {
             new_stage = force_stage;
         }
         if (!new_stage) {
-            this._manager.logger.debug("No next stage found from " + this.stage);
+            this._manager.logger.debug("No next stage found from ".concat(this.stage));
         }
-        this._manager.logger.debug("Stage " + this.stage + " -> " + new_stage);
+        this._manager.logger.debug("Stage ".concat(this.stage, " -> ").concat(new_stage));
         var hooks = this.hooks.filter(function (h) { return h.stage === _this.stage && h.when === "post"; });
         if (hooks.length) {
-            this._manager.logger.debug("Executing " + hooks.length + " hooked functions for post_" + this.stage);
+            this._manager.logger.debug("Executing ".concat(hooks.length, " hooked functions for post_").concat(this.stage));
             hooks.forEach(function (h) { return h.fun(_this, h.context_arg); });
         }
         this.stage = new_stage;
         // Execute hooked functions
         hooks = this.hooks.filter(function (h) { return h.stage === _this.stage && h.when === "pre"; });
         if (hooks.length) {
-            this._manager.logger.debug("Executing " + hooks.length + " hooked functions for pre_" + this.stage);
+            this._manager.logger.debug("Executing ".concat(hooks.length, " hooked functions for pre_").concat(this.stage));
             hooks.forEach(function (h) { return h.fun(_this, h.context_arg); });
         }
         hooks = this.hooks.filter(function (h) { return h.stage === _this.stage && !h.when; });
         if (hooks.length) {
-            this._manager.logger.debug("Executing " + hooks.length + " hooked functions for " + this.stage);
+            this._manager.logger.debug("Executing ".concat(hooks.length, " hooked functions for ").concat(this.stage));
             hooks.forEach(function (h) { return h.fun(_this, h.context_arg); });
         }
         this._manager.broadcast();
@@ -538,6 +557,7 @@ var Game = /** @class */ (function (_super) {
     });
     return Game;
 }(ManagerComponent));
+exports.Game = Game;
 var Message = /** @class */ (function (_super) {
     __extends(Message, _super);
     function Message() {
@@ -551,7 +571,7 @@ var VideoManager = /** @class */ (function (_super) {
         var _this = _super.call(this, manager) || this;
         _this.connections = [];
         _this.ov_session_props = {
-            customSessionId: manager.id,
+            customSessionId: "".concat(manager.id, "_video"),
             recordingMode: openvidu_node_client_1.RecordingMode.ALWAYS,
             defaultRecordingProperties: {
                 outputMode: openvidu_node_client_1.Recording.OutputMode.INDIVIDUAL
@@ -564,19 +584,29 @@ var VideoManager = /** @class */ (function (_super) {
         _this.ov = new openvidu_node_client_1.OpenVidu(process.env.OPENVIDU_URL, process.env.OPENVIDU_SECRET);
         _this.ov.createSession(_this.ov_session_props)
             .then(function (session) { return self.ov_session = session; })
-            .catch(function (err) { return self._manager.logger.error(err); });
+            .then(function () { return self._manager.logger.info(self.ov_session); })
+            .catch(function (err) {
+            self._manager.logger.error("Unable to connect to OpenVidu server.");
+            throw new Error(err);
+        });
         return _this;
     }
-    VideoManager.prototype.get_token = function (player) {
+    VideoManager.prototype.get_token = function (player, i) {
         var _this = this;
+        if (i === void 0) { i = 0; }
         var self = this;
         // Handle connection requests where session not yet initialized
         if (!this.ov_session) {
-            this._manager.logger.debug("Delaying generation of ov_token for " + player.id + " due to uninitalized session.");
+            this._manager.logger.debug("Delaying generation of ov_token for ".concat(player.id, " due to uninitalized session [").concat(i, "]"));
             return new Promise(function (resolve, reject) {
+                var retry_delay = 50;
+                var max_delay = 5000;
+                if (i * retry_delay > max_delay) {
+                    return reject("ov_token generation timed out after ".concat(max_delay, "ms."));
+                }
                 setTimeout(function () {
-                    _this.get_token(player).then(resolve).catch(reject);
-                }, 50, self);
+                    _this.get_token(player, i + 1).then(resolve).catch(reject);
+                }, retry_delay, self);
             });
         }
         var conn = this.connections.find(function (c) { return c.player === player; });
@@ -614,5 +644,4 @@ var VideoManager = /** @class */ (function (_super) {
     });
     return VideoManager;
 }(ManagerComponent));
-module.exports = { Manager: Manager, Game: Game, GameRules: GameRules };
 //# sourceMappingURL=manager.js.map
