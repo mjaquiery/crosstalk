@@ -136,10 +136,6 @@ var Manager = /** @class */ (function () {
     Manager.prototype.add_player = function (socket, network_token) {
         var _this = this;
         var self = this;
-        if (this.players.length === 2) {
-            this.logger.error("Refusing to allow ".concat(network_token, " to join: too many players."));
-            throw new Error("Too many players!");
-        }
         var player = new Player(this, { socket: socket, network_token: network_token, index: this.players.length });
         var existing_player = this.players.find(function (p) { return p.id === player.id; });
         if (existing_player) {
@@ -147,19 +143,23 @@ var Manager = /** @class */ (function () {
             existing_player.socket = socket;
         }
         else {
+            if (this.players.length === 2) {
+                this.logger.error("Refusing to allow ".concat(network_token, " to join: too many players."));
+                throw new Error("Too many players!");
+            }
             this.logger.debug("Accepted new player: ".concat(player.name, " [").concat(player.index, "]"));
             this.players.push(player);
             this.logger.debug("".concat(player.name, " joined [").concat(player.id, "]"));
             socket.on('leave', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, player_timeout_delay, _this, player, socket); });
             socket.on('disconnect', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, player_timeout_delay, _this, player, socket); });
-            this.videoManager.get_token(player)
-                .then(function () { return self.broadcast(); })
-                .catch(function (err) { return self.logger.error(err); });
+            if (this.players.length === 2) {
+                this.next_game();
+            }
+            this.broadcast();
         }
-        if (this.players.length === 2) {
-            this.next_game();
-        }
-        this.broadcast();
+        this.videoManager.get_token(existing_player || player)
+            .then(function () { return self.broadcast(); })
+            .catch(function (err) { return self.logger.error(err); });
     };
     Manager.prototype.remove_player = function (player, socket) {
         if (this.getPlayerById(player.id)) {
@@ -458,7 +458,7 @@ var Game = /** @class */ (function (_super) {
                         var p = game._manager.getPlayerByIndex(m.player_index);
                         p.score += game.payoffs[p.index].value;
                     });
-                    // setTimeout(game => game.advance_stage(), stage_delay, game)
+                    setTimeout(function (game) { return game.advance_stage(); }, stage_delay, game);
                 }
             },
             {
@@ -610,20 +610,21 @@ var VideoManager = /** @class */ (function (_super) {
             });
         }
         var conn = this.connections.find(function (c) { return c.player === player; });
-        if (!conn) {
-            return this.ov_session.createConnection(__assign(__assign({}, self.ov_connection_props), { data: JSON.stringify({ id: player.id, index: player.index }) }))
-                .then(function (connection) {
-                self.connections.push({ player: player, connection: connection });
-                return connection.token;
-            })
-                .catch(function (err) {
-                self._manager.logger.error(err);
-                return null;
-            });
+        if (conn) {
+            console.log("Removing old connection for ".concat(player.name));
+            this.ov_session.forceDisconnect(conn.connection)
+                .catch(function (e) { return console.warn('forceDisconnect error:', e); });
+            this.connections = this.connections.filter(function (c) { return c.player !== player; });
         }
-        else {
-            return new Promise(function (resolve) { return resolve(conn.connection.token); });
-        }
+        return this.ov_session.createConnection(__assign(__assign({}, self.ov_connection_props), { data: JSON.stringify({ id: player.id, index: player.index, now: new Date().getTime() }) }))
+            .then(function (connection) {
+            self.connections.push({ player: player, connection: connection });
+            return connection.token;
+        })
+            .catch(function (err) {
+            self._manager.logger.error(err);
+            return null;
+        });
     };
     Object.defineProperty(VideoManager.prototype, "loggable", {
         get: function () {

@@ -193,17 +193,16 @@ class Manager {
 
     add_player(socket: Socket, network_token: string) {
         const self = this
-        if(this.players.length === 2) {
-            this.logger.error(`Refusing to allow ${network_token} to join: too many players.`)
-            throw new Error("Too many players!")
-        }
-
         const player = new Player(this, {socket, network_token, index: this.players.length})
         const existing_player = this.players.find(p => p.id === player.id)
         if(existing_player) {
             this.logger.debug(`Refreshing socket for ${player.name} [${player.index}]`)
             existing_player.socket = socket
         } else {
+            if(this.players.length === 2) {
+                this.logger.error(`Refusing to allow ${network_token} to join: too many players.`)
+                throw new Error("Too many players!")
+            }
             this.logger.debug(`Accepted new player: ${player.name} [${player.index}]`)
             this.players.push(player)
             this.logger.debug(`${player.name} joined [${player.id}]`)
@@ -221,15 +220,15 @@ class Manager {
                 player,
                 socket
             ))
-            this.videoManager.get_token(player)
-                .then(() => self.broadcast())
-                .catch(err => self.logger.error(err))
+            if(this.players.length === 2) {
+                this.next_game()
+            }
+            this.broadcast()
         }
 
-        if(this.players.length === 2) {
-            this.next_game()
-        }
-        this.broadcast()
+        this.videoManager.get_token(existing_player || player)
+            .then(() => self.broadcast())
+            .catch(err => self.logger.error(err))
     }
 
     remove_player(player: Player, socket: Socket) {
@@ -523,7 +522,7 @@ class Game extends ManagerComponent {
                     const p = game._manager.getPlayerByIndex(m.player_index)
                     p.score += game.payoffs[p.index].value
                 })
-                // setTimeout(game => game.advance_stage(), stage_delay, game)
+                setTimeout(game => game.advance_stage(), stage_delay, game)
             }
         },
         {
@@ -671,22 +670,24 @@ class VideoManager extends ManagerComponent {
             })
         }
         let conn = this.connections.find(c => c.player === player)
-        if(!conn) {
-            return this.ov_session.createConnection({
-                ...self.ov_connection_props,
-                data: JSON.stringify({id: player.id, index: player.index})
-            })
-                .then(connection => {
-                    self.connections.push({player, connection})
-                    return connection.token
-                })
-                .catch(err => {
-                    self._manager.logger.error(err)
-                    return null
-                })
-        } else {
-            return new Promise(resolve => resolve(conn.connection.token))
+        if(conn) {
+            console.log(`Removing old connection for ${player.name}`)
+            this.ov_session.forceDisconnect(conn.connection)
+                .catch(e => console.warn('forceDisconnect error:', e))
+            this.connections = this.connections.filter(c => c.player !== player)
         }
+        return this.ov_session.createConnection({
+            ...self.ov_connection_props,
+            data: JSON.stringify({id: player.id, index: player.index, now: new Date().getTime()})
+        })
+            .then(connection => {
+                self.connections.push({player, connection})
+                return connection.token
+            })
+            .catch(err => {
+                self._manager.logger.error(err)
+                return null
+            })
     }
 
     get loggable() {

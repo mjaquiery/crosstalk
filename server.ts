@@ -75,7 +75,7 @@ function new_manger(room_name = "game", game_count = 5) {
     <p>
         You are sat at a table being interrogated. 
         Across the hall you can see your partner, also being interrogated.
-        You know they haven't got much on you; 
+        You know there isn't much evidence against you; 
         if neither you nor your partner talk, the most you'll get is a small fine.
     </p>
     <p>
@@ -114,6 +114,8 @@ io.on('connection', (socket) => {
             if (typeof game_room !== 'string') {
                 socket.emit("error", "room_name must be a string")
                 return
+            } else {
+                game_room = game_room.replace(/\s/, '_')
             }
             if (typeof network_token !== 'string') {
                 socket.emit("error", "network_token must be a string")

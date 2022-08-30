@@ -54,7 +54,7 @@ function new_manger(room_name, game_count) {
     };
     var game = function () { return new manager_1.Game(manager, {
         name: 'Prisoner\'s dilemma',
-        description: "\n    <p>\n        You are sat at a table being interrogated. \n        Across the hall you can see your partner, also being interrogated.\n        You know they haven't got much on you; \n        if neither you nor your partner talk, the most you'll get is a small fine.\n    </p>\n    <p>\n        If one of you talks and the other doesn't, \n        whoever talks walks away and lets the other bear a much heavier sentence.\n        If you both talk, though, you're both in for a heavy sentence.\n    </p>\n    ",
+        description: "\n    <p>\n        You are sat at a table being interrogated. \n        Across the hall you can see your partner, also being interrogated.\n        You know there isn't much evidence against you; \n        if neither you nor your partner talk, the most you'll get is a small fine.\n    </p>\n    <p>\n        If one of you talks and the other doesn't, \n        whoever talks walks away and lets the other bear a much heavier sentence.\n        If you both talk, though, you're both in for a heavy sentence.\n    </p>\n    ",
         prompt: "\n    <p>\n        The pressure is on. What are you going to do?\n    </p>\n    ",
         decision_labels: [
             { text: 'Keep quiet', icon: '&#129296;' },
@@ -80,6 +80,9 @@ io.on('connection', function (socket) {
             if (typeof game_room !== 'string') {
                 socket.emit("error", "room_name must be a string");
                 return;
+            }
+            else {
+                game_room = game_room.replace(/\s/, '_');
             }
             if (typeof network_token !== 'string') {
                 socket.emit("error", "network_token must be a string");
