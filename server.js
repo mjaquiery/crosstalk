@@ -30,7 +30,7 @@ var io = new socketIO.Server(http, {
 });
 function new_manger(room_name, game_count) {
     if (room_name === void 0) { room_name = "game"; }
-    if (game_count === void 0) { game_count = 5; }
+    if (game_count === void 0) { game_count = 2; }
     var manager = new manager_1.Manager(io, room_name);
     var coop = { value: 2, label: 'Small fine' };
     var betrayed = { value: 0, label: 'Huge sentence' };
@@ -75,7 +75,7 @@ function new_manger(room_name, game_count) {
 io.on('connection', function (socket) {
     console.log("New connection: ".concat(socket.id));
     socket.on('joinGame', function (_a) {
-        var game_room = _a.game_room, network_token = _a.network_token;
+        var game_room = _a.game_room, player_name = _a.player_name, network_token = _a.network_token;
         try {
             if (typeof game_room !== 'string') {
                 socket.emit("error", "room_name must be a string");
@@ -83,6 +83,16 @@ io.on('connection', function (socket) {
             }
             else {
                 game_room = game_room.replace(/\s/, '_');
+            }
+            if (typeof player_name !== 'string') {
+                socket.emit("warning", "invalid name sent, using default");
+                player_name = "";
+            }
+            else {
+                if (player_name.length > 24) {
+                    socket.emit("warning", "player names longer than 24 characters are truncated");
+                    player_name = player_name.substr(0, 24);
+                }
             }
             if (typeof network_token !== 'string') {
                 socket.emit("error", "network_token must be a string");
@@ -93,10 +103,11 @@ io.on('connection', function (socket) {
             }
             var manager = managers[game_room];
             try {
-                manager.add_player(socket, network_token);
+                manager.add_player(socket, player_name, network_token);
             }
             catch (e) {
-                socket.emit("error", e);
+                console.error("Cannot add player", e);
+                socket.emit("error", e.message);
             }
         }
         catch (e) {

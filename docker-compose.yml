@@ -26,9 +26,11 @@ services:
       - "OPENVIDU_URL=https://192.168.0.84:4443/"
       - "OPENVIDU_SECRET=MY_SECRET_KEY_123"
       - "GAME_LOG=/game_logs"
+      - "GAME_DATA=/game_data"
       - "NODE_TLS_REJECT_UNAUTHORIZED=0"  # avoid OV.createSession rejection
     volumes:
       - .:/app
       - ./.data/game_logs:/game_logs
+      - ./.data/game_data:/game_data
     depends_on:
       - rtc

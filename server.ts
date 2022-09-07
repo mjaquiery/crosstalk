@@ -1,4 +1,15 @@
-import { Manager, Game } from "./src/manager"
+import {
+    DecisionLabel,
+    Game,
+    Manager,
+    Move,
+    Payoff,
+    PayoffMatrix,
+    PayoffSet,
+    ResultString,
+    RewriteRule
+} from "./src/manager"
+import {Server} from "socket.io";
 let managers: {[game_name: string]: Manager} = {}
 
 const express = require('express');
@@ -22,7 +33,7 @@ const http = https.createServer(sshOptions, express()).listen(3000, () => {
     console.log('Listening on port *:3000')
 });
 
-const io = new socketIO.Server(http, {
+const io: Server = new socketIO.Server(http, {
     cors: corsOptions,
     allowEIO3: true,
     cookie: {
@@ -31,14 +42,14 @@ const io = new socketIO.Server(http, {
     }
 })
 
-function new_manger(room_name = "game", game_count = 5) {
+function new_manger(room_name: string = "game", game_count: number = 2): Manager {
     const manager = new Manager(io, room_name)
 
-    const coop = {value: 2, label: 'Small fine'}
-    const betrayed = {value: 0, label: 'Huge sentence'}
-    const betrayer = {value: 10, label: 'No punishment'}
-    const mutual_defection = {value: 1, label: 'Heavy sentence'}
-    const cooperate = {
+    const coop: Payoff = {value: 2, label: 'Small fine'}
+    const betrayed: Payoff = {value: 0, label: 'Huge sentence'}
+    const betrayer: Payoff = {value: 10, label: 'No punishment'}
+    const mutual_defection: Payoff = {value: 1, label: 'Heavy sentence'}
+    const cooperate: PayoffSet = {
         resultString: (p1, p2) => `
     <span data-player-index="${p1.index}">${p1.name}</span>
      and 
@@ -46,21 +57,21 @@ function new_manger(room_name = "game", game_count = 5) {
      cooperate`,
         payoffs: [coop, coop]
     }
-    const p1_betrays = {
+    const p1_betrays: PayoffSet = {
         resultString: (p1, p2) => `
     <span data-player-index="${p1.index}">${p1.name}</span>
      betrays 
     <span data-player-index="${p2.index}">${p2.name}</span>`,
         payoffs: [betrayer, betrayed]
     }
-    const p2_betrays = {
+    const p2_betrays: PayoffSet = {
         resultString: (p1, p2) => `
     <span data-player-index="${p2.index}">${p2.name}</span>
      betrays 
     <span data-player-index="${p1.index}">${p1.name}</span>`,
         payoffs: [betrayed, betrayer]
     }
-    const both_defect = {
+    const both_defect: PayoffSet = {
         resultString: (p1, p2) => `
     <span data-player-index="${p1.index}">${p1.name}</span>
      and 
@@ -109,13 +120,22 @@ function new_manger(room_name = "game", game_count = 5) {
 
 io.on('connection', (socket) => {
     console.log(`New connection: ${socket.id}`)
-    socket.on('joinGame', ({game_room, network_token}) => {
+    socket.on('joinGame', ({game_room, player_name, network_token}) => {
         try {
             if (typeof game_room !== 'string') {
                 socket.emit("error", "room_name must be a string")
                 return
             } else {
                 game_room = game_room.replace(/\s/, '_')
+            }
+            if (typeof player_name !== 'string') {
+                socket.emit("warning", "invalid name sent, using default")
+                player_name = ""
+            } else {
+                if(player_name.length > 24) {
+                    socket.emit("warning", "player names longer than 24 characters are truncated")
+                    player_name = player_name.substr(0,24)
+                }
             }
             if (typeof network_token !== 'string') {
                 socket.emit("error", "network_token must be a string")
@@ -126,9 +146,10 @@ io.on('connection', (socket) => {
             }
             const manager = managers[game_room]
             try {
-                manager.add_player(socket, network_token)
+                manager.add_player(socket, player_name, network_token)
             } catch (e) {
-                socket.emit("error", e)
+                console.error("Cannot add player", e)
+                socket.emit("error", e.message)
             }
         } catch (e) {
             console.error(e)

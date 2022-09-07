@@ -9,22 +9,26 @@ import {
     Session,
     SessionProperties
 } from "openvidu-node-client";
+import { writeFile } from 'node:fs/promises';
 
 const log4js = require("log4js")
 
-const stage_delay: number = 1000
+const stage_delay_default: number = 1000
 const player_timeout_delay: number = 60000
 
-type DecisionLabel = {
+export type DecisionLabel = {
     text: string,
     icon?: string
 }
 
-type Move = {
+export type Move = {
     index: number,
     label: DecisionLabel,
-    player_index: number
+    player_index: number,
+    timestamp: number
 }
+
+export type RewriteRule = (move: Move, game: Game) => Move
 
 type Hook = {
     stage: GameStage,
@@ -41,6 +45,7 @@ type GameState = {
     rules: Partial<{[k in GameRules]: EnabledStatus}>,
     decision_labels: [DecisionLabel, DecisionLabel],
     moves: Move[],
+    rewritten_moves: Move[],
     payoffs: Payoff[],
     resultString: string,
     number?: number,
@@ -65,15 +70,15 @@ type ClientGameState = {
 /**
  * A value for the payoff, and a label to be displayed to the receiver of the payoff
  */
-type Payoff = { value: number, label?: string }
-type ResultString = (player1: Player, player2: Player) => string
-type PayoffSet = {
+export type Payoff = { value: number, label?: string }
+export type ResultString = (player1: Player, player2: Player) => string
+export type PayoffSet = {
     resultString: ResultString,
     payoffs: [Payoff, Payoff]
 }
-type PayoffMatrix = [
-    PayoffSet, PayoffSet,
-    PayoffSet, PayoffSet
+export type PayoffMatrix = [
+    [PayoffSet, PayoffSet],
+    [PayoffSet, PayoffSet]
 ]
 
 enum GameStage {
@@ -153,6 +158,7 @@ class GameRule {
     }
 }
 
+
 class Manager {
     private server: Server
     players: Player[]
@@ -160,14 +166,12 @@ class Manager {
     id: string
     name: string
     logger
-    private messages: Message[]
     private videoManager: VideoManager
 
     constructor(server: Server, room_name: string = "game") {
         this.server = server
         this.players = []
         this.games = []
-        this.messages = []
         this.id = `${room_name}_${new Date().getTime().toString()}`
         this.name = room_name
 
@@ -185,15 +189,16 @@ class Manager {
 
         const logger = log4js.getLogger(this.id);
         logger.level = log4js.DEBUG
-        this.logger = console // logger
+        this.logger = logger
+        //this.logger = console
         this.logger.debug(`Manger initialized.`)
 
         this.videoManager = new VideoManager(this)
     }
 
-    add_player(socket: Socket, network_token: string) {
+    add_player(socket: Socket, player_name: string, network_token: string) {
         const self = this
-        const player = new Player(this, {socket, network_token, index: this.players.length})
+        const player = new Player(this, {socket, name: player_name, network_token, index: this.players.length})
         const existing_player = this.players.find(p => p.id === player.id)
         if(existing_player) {
             this.logger.debug(`Refreshing socket for ${player.name} [${player.index}]`)
@@ -274,9 +279,94 @@ class Manager {
             console.debug(`Starting game ${this.current_game.name}`)
             this.current_game.advance_stage(GameStage.Pre_begin)
         } else {
-            console.debug(`All ${this.games.length} game(s) complete.`)
-            this.broadcast()
+            this.end()
         }
+    }
+
+    end() {
+        console.debug(`All ${this.games.length} game(s) complete.`)
+        this.broadcast()
+        this.players.forEach(p => p.socket.emit("gameOver"))
+        this.videoManager.close_all()
+        // Save all the game data neatly into a .csv file
+        const tsv_data = this.games.map((g, i) => {
+            const s = g.state
+            const moves = s.moves
+            const rewritten_moves = s.rewritten_moves
+
+            const f = (a, b) => a.player_index > b.player_index? 1 : -1
+            moves.sort(f)
+            rewritten_moves.sort(f)
+
+            const baseline = g.stage_timestamps[`${GameStage.Pre_begin}_pre`]
+            const timings = {
+                time_game_start: baseline,
+                t_player_1_intended_move_ms: s.moves[0].timestamp - baseline,
+                t_player_2_intended_move_ms: s.moves[1].timestamp - baseline,
+                t_player_1_rewritten_move_ms: s.rewritten_moves[0].timestamp - baseline,
+                t_player_2_rewritten_move_ms: s.rewritten_moves[1].timestamp - baseline,
+            }
+            for(const k in g.stage_timestamps) {
+                if(g.stage_timestamps.hasOwnProperty(k) && /_end$/.test(k)) {
+                    timings[`t_${k}_ms`] = g.stage_timestamps[k] - baseline
+                }
+            }
+
+            return {
+                game_name: s.name,
+                game_number: i,
+                player_1_name: this.players[0].name,
+                player_2_name: this.players[1].name,
+                player_1_intended_move_index: s.moves[0].index,
+                player_2_intended_move_index: s.moves[1].index,
+                player_1_rewritten_move_index: s.rewritten_moves[0].index,
+                player_2_rewritten_move_index: s.rewritten_moves[1].index,
+                resultString: s.resultString,
+                player_1_payoff_value: s.payoffs[0].value,
+                player_2_payoff_value: s.payoffs[1].value,
+                player_1_payoff_name: s.payoffs[0].label,
+                player_2_payoff_name: s.payoffs[1].label,
+                player_1_intended_move_text: s.moves[0].label.text,
+                player_2_intended_move_text: s.moves[1].label.text,
+                player_1_intended_move_icon: s.moves[0].label.icon,
+                player_2_intended_move_icon: s.moves[1].label.icon,
+                player_1_rewritten_move_text: s.rewritten_moves[0].label.text,
+                player_2_rewritten_move_text: s.rewritten_moves[1].label.text,
+                player_1_rewritten_move_icon: s.rewritten_moves[0].label.icon,
+                player_2_rewritten_move_icon: s.rewritten_moves[1].label.icon,
+                ...timings,
+                player_1_id: this.players[0].id,
+                player_2_id: this.players[1].id,
+                game_description: s.description,
+                game_prompt: s.prompt,
+                decision_1_text: s.decision_labels[0].text,
+                decision_2_text: s.decision_labels[1].text,
+                decision_1_icon: s.decision_labels[0].icon,
+                decision_2_icon: s.decision_labels[1].icon,
+                ...s.rules,
+            }
+        })
+        // Convert to CSV object
+        const headers = []
+        for(const k in tsv_data[0]) {
+            if(tsv_data[0].hasOwnProperty(k)) {
+                headers.push(k.replace(/\t/, ' '))
+            }
+        }
+        const tsv = [
+            headers.join('\t'),
+            ...tsv_data.map(x => {
+                return headers.map(h => JSON.stringify(x[h]).replace(/\t/, ' ')).join('\t')
+            })
+        ].join('\n')
+        const self = this
+        writeFile(`${process.env.GAME_DATA}/${this.id}.tsv`, tsv)
+            .then(() => writeFile(
+                `${process.env.GAME_DATA}/${this.id}.json`,
+                JSON.stringify(tsv_data)
+            ))
+            .then(() => self.logger.info('Game data saved.'))
+            .catch(e => self.logger.error(`Error saving game data.`, e))
     }
 
     /**
@@ -304,8 +394,9 @@ class Manager {
             })
             game = {
                 ...this.current_game.state,
-                moves: this.current_game.get_rule(GameRules.show_partner_moves)?
-                    this.current_game.state.moves : {[player.index]: this.current_game.state.moves[player.index]},
+                moves: this.current_game.rewritten_moves.filter(m =>
+                    m.player_index === player.index || this.current_game.get_rule(GameRules.show_partner_moves)
+                ),
                 payoffs: this.current_game.get_rule(GameRules.show_partner_payoff)?
                     this.current_game.payoffs : this.current_game.state.payoffs.map(
                         (po, i) => i === player.index? po : null
@@ -361,10 +452,6 @@ class Manager {
     getPlayerByIndex(index: number): Player {
         return this.players.find(p => p.index === index)
     }
-
-    get is_open(): boolean {
-        return this.players.length < 2
-    }
 }
 
 class ManagerComponent {
@@ -386,12 +473,16 @@ class Player extends ManagerComponent {
     private _name: string
     private readonly _id: string
 
-    constructor(manager: Manager, props: {socket: Socket, network_token: string, index: number}) {
+    constructor(manager: Manager, props: {socket: Socket, name: string, network_token: string, index: number}) {
         super(manager);
         this.socket = props.socket
         this._id = props.network_token
         this.index = props.index? 1 : 0
-        this._name = `Player ${this.index + 1}`
+        if(props.name) {
+            this._name = props.name
+        } else {
+            this._name = `Player ${this.index + 1}`
+        }
     }
 
     get id() { return this._id }
@@ -420,12 +511,7 @@ class Game extends ManagerComponent {
     moves: Move[] = []
     payoffs: Payoff[] = []
     resultString: string = ""
-    readonly name: string
-    readonly description: string
-    readonly prompt: string
-    readonly payoff_matrix: PayoffMatrix
-    readonly decision_labels: [DecisionLabel, DecisionLabel] = [{text: 'cooperate'}, {text: 'defect'}]
-    readonly rules: GameRule[] = [
+    rules: GameRule[] = [
         new GameRule(GameRules.allow_chat, EnabledStatus.Force_off),
         new GameRule(GameRules.allow_video, EnabledStatus.Force_on),
         new GameRule(GameRules.show_description, EnabledStatus.Force_on),
@@ -450,17 +536,31 @@ class Game extends ManagerComponent {
         new GameRule(GameRules.show_own_score, EnabledStatus.Force_on),
         new GameRule(GameRules.show_partner_score, EnabledStatus.Force_on),
     ]
+    rewrite_rule: RewriteRule = (move, game) => move
+    timings: Partial<{[k in GameStage]: number}> = {
+        [GameStage.Pre_begin]: 100,
+        [GameStage.Initial_presentation]: 1000,
+        [GameStage.Reveal_moves]: 1000,
+        [GameStage.Reveal_payoff]: 1000
+    }
+    default_timing: number = stage_delay_default
+    stage_timestamps: {[k: string]: number} = {}
+    readonly name: string
+    readonly description: string
+    readonly prompt: string
+    readonly payoff_matrix: PayoffMatrix
+    readonly decision_labels: [DecisionLabel, DecisionLabel] = [{text: 'cooperate'}, {text: 'defect'}]
     readonly hooks: Hook[] = [
         {
             stage: GameStage.Pre_begin,
             fun: function (game: Game) {
-                setTimeout(game => game.advance_stage(), 100, game)
+                setTimeout(game => game.advance_stage(), game.delay, game)
             }
         },
         {
             stage: GameStage.Initial_presentation,
             fun: function (game: Game) {
-                setTimeout(game => game.advance_stage(), stage_delay, game)
+                setTimeout(game => game.advance_stage(), game.delay, game)
             }
         },
         {
@@ -479,7 +579,8 @@ class Game extends ManagerComponent {
                         new_move = {
                             player_index: game._manager.players.find(p => p.socket === this).index,
                             index: move? 1 : 0,
-                            label: game.decision_labels[move? 1 : 0]
+                            label: game.decision_labels[move? 1 : 0],
+                            timestamp: new Date().getTime()
                         }
                     } catch (e) {
                         return reject(this, "That is not a valid move.")
@@ -503,31 +604,31 @@ class Game extends ManagerComponent {
         },
         {
             stage: GameStage.Reveal_moves,
-            fun: game => setTimeout(game => game.advance_stage(), stage_delay, game)
+            fun: game => setTimeout(game => game.advance_stage(), game.delay, game)
         },
         {
             stage: GameStage.Reveal_payoff,
             fun: game => {
                 // Matrix indexed by player move values
                 // Player 2 (index=1) first because P1 is columns and P2 is rows!
-                const payoffs = game.payoff_matrix[
-                    game.moves.find(m => game._manager.getPlayerByIndex(m.player_index).index === 1).index
+                const payoffs: PayoffSet = game.payoff_matrix[
+                    game.rewritten_moves.find(m => game._manager.getPlayerByIndex(m.player_index).index === 1).index
                     ][
-                    game.moves.find(m => game._manager.getPlayerByIndex(m.player_index).index === 0).index
+                    game.rewritten_moves.find(m => game._manager.getPlayerByIndex(m.player_index).index === 0).index
                     ]
                 game.payoffs = payoffs.payoffs
-                game.resultString = payoffs.resultString(...game._manager.players)
+                game.resultString = payoffs.resultString(game._manager.players[0], game._manager.players[1])
                 game._manager.logger.debug(`${game.resultString} [P1=${game.payoffs[0].value}, P2=${game.payoffs[1].value}]`)
                 game.moves.forEach(m => {
                     const p = game._manager.getPlayerByIndex(m.player_index)
                     p.score += game.payoffs[p.index].value
                 })
-                setTimeout(game => game.advance_stage(), stage_delay, game)
+                setTimeout(game => game.advance_stage(), game.delay, game)
             }
         },
         {
             stage: GameStage.End,
-            fun: game => setTimeout(game => game.advance_stage(), stage_delay, game)
+            fun: game => setTimeout(game => game.advance_stage(), game.delay, game)
         },
         {
             stage: GameStage.Cleanup,
@@ -535,7 +636,14 @@ class Game extends ManagerComponent {
         }
     ]
 
-    constructor(manager, props) {
+    constructor(manager: Manager, props: {
+        name?: string,
+        description?: string,
+        prompt?: string,
+        decision_labels?: DecisionLabel[],
+        rewrite_rule?: RewriteRule,
+        payoff_matrix?: PayoffMatrix,
+    }) {
         super(manager);
         for(let p in props) {
             this[p] = props[p]
@@ -555,13 +663,19 @@ class Game extends ManagerComponent {
             rules,
             decision_labels: this.decision_labels,
             moves: this.moves,
+            rewritten_moves: this.rewritten_moves,
             payoffs: this.payoffs,
             resultString: this.resultString,
             timestamp: new Date().getTime()
         }
     }
 
+    get rewritten_moves() {
+        return this.moves.map(m => this.rewrite_rule(m, this))
+    }
+
     advance_stage(force_stage?: GameStage) {
+        this._manager.logger.debug(`advance_stage(${force_stage})`)
         let found = false
         let new_stage
         if(typeof force_stage === 'undefined') {
@@ -583,14 +697,17 @@ class Game extends ManagerComponent {
         }
 
         this._manager.logger.debug(`Stage ${this.stage} -> ${new_stage}`)
+        this.stage_timestamps[`${this.stage}_end`] = new Date().getTime()
         let hooks = this.hooks.filter(h => h.stage === this.stage && h.when === "post")
         if(hooks.length) {
             this._manager.logger.debug(`Executing ${hooks.length} hooked functions for post_${this.stage}`)
             hooks.forEach(h => h.fun(this, h.context_arg))
         }
+        this.stage_timestamps[`${this.stage}_post_complete`] = new Date().getTime()
         this.stage = new_stage
 
         // Execute hooked functions
+        this.stage_timestamps[`${this.stage}_pre`] = new Date().getTime()
         hooks = this.hooks.filter(h => h.stage === this.stage && h.when === "pre")
         if(hooks.length) {
             this._manager.logger.debug(`Executing ${hooks.length} hooked functions for pre_${this.stage}`)
@@ -601,6 +718,7 @@ class Game extends ManagerComponent {
             this._manager.logger.debug(`Executing ${hooks.length} hooked functions for ${this.stage}`)
             hooks.forEach(h => h.fun(this, h.context_arg))
         }
+        this.stage_timestamps[`${this.stage}_start`] = new Date().getTime()
         this._manager.broadcast()
     }
 
@@ -614,6 +732,12 @@ class Game extends ManagerComponent {
 
     get index() {
         return this._manager.games.indexOf(this)
+    }
+
+    get delay() {
+        if(typeof this.timings[this.stage] === 'number')
+            return this.timings[this.stage]
+        return this.default_timing
     }
 }
 
@@ -642,14 +766,19 @@ class VideoManager extends ManagerComponent {
         this.ov_connection_props = {
             role: OpenViduRole.PUBLISHER
         }
+        this.create_session()
+    }
+
+    create_session() {
         const self = this
         this.ov = new OpenVidu(process.env.OPENVIDU_URL, process.env.OPENVIDU_SECRET)
         this.ov.createSession(this.ov_session_props)
             .then(session => self.ov_session = session)
             .then(() => self._manager.logger.info(self.ov_session))
             .catch(err => {
-                self._manager.logger.error("Unable to connect to OpenVidu server.")
-                throw new Error(err)
+                self._manager.logger.error("Unable to connect to OpenVidu server. Error:")
+                self._manager.logger.error(err)
+                setTimeout(self => self.create_session(), 10000, self)
             })
     }
 
@@ -659,7 +788,7 @@ class VideoManager extends ManagerComponent {
         if(!this.ov_session) {
             this._manager.logger.debug(`Delaying generation of ov_token for ${player.id} due to uninitalized session [${i}]`)
             return new Promise((resolve, reject) => {
-                const retry_delay = 50
+                const retry_delay = 1000
                 const max_delay = 5000
                 if(i * retry_delay > max_delay) {
                     return reject(`ov_token generation timed out after ${max_delay}ms.`)
@@ -688,6 +817,14 @@ class VideoManager extends ManagerComponent {
                 self._manager.logger.error(err)
                 return null
             })
+    }
+
+    close_all() {
+        this.connections.forEach(c => {
+            this.ov_session.forceDisconnect(c.connection)
+                .catch(e => console.warn('forceDisconnect error:', e))
+        })
+        this.connections = []
     }
 
     get loggable() {
