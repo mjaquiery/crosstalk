@@ -34,3 +34,18 @@ services:
       - ./.data/game_data:/game_data
     depends_on:
       - rtc
+
+  data-server:
+    build:
+      context: .
+      dockerfile: Dockerfile-data-server
+    ports:
+      - "8000:8000"
+    environment:
+      - "GAME_DATA=/game_data"
+      - "VIDEO_DATA=/video_data"
+      - "ACCESS_PASSWORD=pw"
+    volumes:
+      - .:/app
+      - ./.data/game_data:/game_data
+      - ./.data/recordings:/video_data

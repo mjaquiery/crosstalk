@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Crosstalk Data - Login</title>
+    <link href="/style/style.css" rel="stylesheet" />
+</head>
+<body>
+<div class="wrapper">
+    <div class="messages">
+        <% if (typeof error !== 'undefined') { %>
+            <div class="error">
+                <%= error %>
+            </div>
+        <% } else if (typeof warning !== 'undefined') { %>
+            <div class="warning">
+                <%= warning %>
+            </div>
+        <% } %>
+    </div>
+    <form action="/login_post" method="post">
+        <input name="pass" type="password" placeholder="Enter password" onload="this.focus()">
+        <input type="submit" text="Login">
+    </form>
+</div>
+</body>
+</html>

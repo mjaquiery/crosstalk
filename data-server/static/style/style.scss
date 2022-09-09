@@ -1,0 +1,50 @@
+html, body {
+  height: 100%;
+  display: grid;
+}
+
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  margin: auto;
+  position: relative;
+}
+
+.messages {
+  font-family: monospace;
+  padding: 1em;
+  position: absolute;
+  bottom: 2em;
+}
+.error {
+  color: red;
+}
+.warning {
+  color: orange;
+}
+
+.games-wrapper {
+  width: max(90vw, 400px);
+}
+.games {
+  width: 100%;
+  &:nth-child(2n) {
+    background-color: aliceblue;
+  }
+}
+.game {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.type {
+  display: flex;
+  flex-direction: column;
+  .type-links {
+    display: flex;
+    width: 100%;
+    justify-content: space-evenly;
+    font-size: 1.4em;
+  }
+}

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Crosstalk Data - Listings</title>
+    <link href="/style/style.css" rel="stylesheet" />
+</head>
+<body>
+<div class="wrapper games-wrapper">
+    <% if (typeof games !== 'undefined') { %>
+        <h1>Game listings</h1>
+        <div class="games">
+            <% for (const game in games) { %>
+                <div class="game">
+                    <span class="name"><%= game %></span>
+                    <% for (const type in games[game]) { %>
+                        <div class="type <%= type %>">
+                            <div class="type-name">Download <%= type %></div>
+                            <div class="type-links">
+                                <% for (const ext in games[game][type]) {%>
+                                    <a href="download/<%= type %>/<%= games[game][type][ext] %>">
+                                        <span class="data <%= ext %>>"><%= ext %></span>
+                                    </a>
+                                <% } %>
+                            </div>
+                        </div>
+                    <% } %>
+                </div>
+            <% } %>
+        </div>
+    <% } else { %>
+        <div class="error">
+            <p>No games found. Please try again later.</p>
+        </div>
+    <% } %>
+</div>
+</body>
+</html>
