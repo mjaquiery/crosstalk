@@ -16,4 +16,4 @@ RUN npm install
 #EXPOSE 8080
 
 #CMD [ "tail", "-F", "anything" ]
-CMD [ "node", "data-server/data-server.js" ]
+CMD [ "node", "data-server/serve.js" ]

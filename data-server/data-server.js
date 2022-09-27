@@ -25,11 +25,6 @@ var express = require('express');
 var session = require('express-session');
 var fs = require('fs');
 var path = require('path');
-var https = require('https');
-var sshOptions = {
-    key: fs.readFileSync('openvidukey.pem'),
-    cert: fs.readFileSync('openviducert.pem')
-};
 var app = express();
 app.set('view engine', 'ejs');
 app.set('views', "".concat(__dirname, "/views"));
@@ -39,14 +34,14 @@ app.use(session({
     secret: 'h4ber0453RRie',
     saveUninitialized: true,
     resave: false,
-    cookie: { secure: true }
+    cookie: { secure: process.env.NODE_ENV !== 'test' }
 }));
 // middleware to test if authenticated
 function isAuthenticated(req, res, next) {
     if (req.session.logged_on)
         next();
     else {
-        console.debug("Authentication failed; redirecting to /login");
+        console.debug("Authentication failed; redirecting to /login", req.session);
         res.render('login', { warning: "You must log in to continue." });
     }
 }
@@ -61,7 +56,6 @@ app.post('/login_post', express.urlencoded({ extended: false }), function (req, 
             // regenerate the session, which is good practice to help
             // guard against forms of session fixation
             req.session.regenerate(function (err) {
-                console.debug("session.regenerate(".concat(err, ")"));
                 if (err)
                     next(err);
                 // store user information in session, typically a user id
@@ -69,6 +63,7 @@ app.post('/login_post', express.urlencoded({ extended: false }), function (req, 
                 // save the session before redirection to ensure page
                 // load does not happen before session is saved
                 req.session.save(function (err) {
+                    console.debug(req.session);
                     if (err)
                         return next(err);
                     res.redirect('/');
@@ -141,7 +136,7 @@ app.get('/', isAuthenticated, function (req, res) {
 app.get('/download/:type/:file', isAuthenticated, function (req, res) {
     try {
         var dir = req.params.type === 'data' ?
-            process.env.GAME_DATA : path.join(process.env.VIDEO_DATA, path.parse(req.params.file).name);
+            path.join(process.env.GAME_DATA) : path.join(process.env.VIDEO_DATA, path.parse(req.params.file).name);
         var file = path.join(dir, req.params.file);
         if (path.dirname(file) === dir)
             res.download(file);
@@ -153,7 +148,5 @@ app.get('/download/:type/:file', isAuthenticated, function (req, res) {
         res.redirect('/');
     }
 });
-https.createServer(sshOptions, app).listen(8000, function () {
-    console.log('Data server listening on port *:8000');
-});
+module.exports = app;
 //# sourceMappingURL=data-server.js.map

@@ -35,43 +35,14 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     return to.concat(ar || Array.prototype.slice.call(from));
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GameRules = exports.Game = exports.Manager = void 0;
+exports.Player = exports.GameRule = exports.GameRules = exports.Game = exports.Manager = void 0;
 var openvidu_node_client_1 = require("openvidu-node-client");
 var promises_1 = require("node:fs/promises");
+var enums_1 = require("./enums/enums");
+Object.defineProperty(exports, "GameRules", { enumerable: true, get: function () { return enums_1.GameRules; } });
 var log4js = require("log4js");
 var stage_delay_default = 1000;
 var player_timeout_delay = 60000;
-var GameStage;
-(function (GameStage) {
-    GameStage["Pre_begin"] = "Pre-begin";
-    GameStage["Initial_presentation"] = "Initial presentation";
-    GameStage["Player_moves_enabled"] = "Player moves enabled";
-    GameStage["Player_moves_in_progress"] = "Player moves in progress";
-    GameStage["Player_moves_complete"] = "Player moves complete";
-    GameStage["Reveal_moves"] = "Reveal moves";
-    GameStage["Reveal_payoff"] = "Reveal payoff";
-    GameStage["End"] = "End";
-    GameStage["Cleanup"] = "Cleanup";
-})(GameStage || (GameStage = {}));
-var EnabledStatus;
-(function (EnabledStatus) {
-    EnabledStatus[EnabledStatus["Force_off"] = -1] = "Force_off";
-    EnabledStatus[EnabledStatus["Unset"] = 0] = "Unset";
-    EnabledStatus[EnabledStatus["Force_on"] = 1] = "Force_on";
-})(EnabledStatus || (EnabledStatus = {}));
-var GameRules;
-(function (GameRules) {
-    GameRules["allow_chat"] = "allow chat";
-    GameRules["allow_video"] = "allow video";
-    GameRules["allow_player_move"] = "allow player move";
-    GameRules["show_description"] = "show description";
-    GameRules["show_own_score"] = "show own score";
-    GameRules["show_payoff_matrix"] = "show payoff matrix";
-    GameRules["show_partner_moves"] = "show partner moves";
-    GameRules["show_partner_payoff"] = "show partner payoff";
-    GameRules["show_partner_score"] = "show partner score";
-})(GameRules || (GameRules = {}));
-exports.GameRules = GameRules;
 var GameRule = /** @class */ (function () {
     /**
      * A Rule maps GameStages to EnabledStatuses.
@@ -90,9 +61,9 @@ var GameRule = /** @class */ (function () {
         if (values instanceof Object) {
             var last_value = void 0;
             var backfill = [];
-            for (var gamestage in GameStage) {
-                var stage = GameStage[gamestage];
-                if (values[stage] in EnabledStatus) {
+            for (var gamestage in enums_1.GameStage) {
+                var stage = enums_1.GameStage[gamestage];
+                if (values[stage] in enums_1.EnabledStatus) {
                     _values[stage] = values[stage];
                     last_value = values[stage];
                     while (backfill.length) {
@@ -109,8 +80,8 @@ var GameRule = /** @class */ (function () {
         }
         else {
             // Single value supplied
-            for (var gamestage in GameStage) {
-                var stage = GameStage[gamestage];
+            for (var gamestage in enums_1.GameStage) {
+                var stage = enums_1.GameStage[gamestage];
                 _values[stage] = values;
             }
         }
@@ -119,6 +90,7 @@ var GameRule = /** @class */ (function () {
     }
     return GameRule;
 }());
+exports.GameRule = GameRule;
 var Manager = /** @class */ (function () {
     function Manager(server, room_name) {
         var _a;
@@ -216,7 +188,7 @@ var Manager = /** @class */ (function () {
         }
         if (this.current_game instanceof Game) {
             console.debug("Starting game ".concat(this.current_game.name));
-            this.current_game.advance_stage(GameStage.Pre_begin);
+            this.current_game.advance_stage(enums_1.GameStage.Pre_begin);
         }
         else {
             this.end();
@@ -236,7 +208,7 @@ var Manager = /** @class */ (function () {
             var f = function (a, b) { return a.player_index > b.player_index ? 1 : -1; };
             moves.sort(f);
             rewritten_moves.sort(f);
-            var baseline = g.stage_timestamps["".concat(GameStage.Pre_begin, "_pre")];
+            var baseline = g.stage_timestamps["".concat(enums_1.GameStage.Pre_begin, "_pre")];
             var timings = {
                 time_game_start: baseline,
                 t_player_1_intended_move_ms: s.moves[0].timestamp - baseline,
@@ -280,10 +252,10 @@ var Manager = /** @class */ (function () {
         if (this.current_game instanceof Game) {
             players = this.players.map(function (p) {
                 var showScore = false;
-                if (p === player && manager.current_game.get_rule(GameRules.show_own_score)) {
+                if (p === player && manager.current_game.get_rule(enums_1.GameRules.show_own_score)) {
                     showScore = true;
                 }
-                else if (player !== p && manager.current_game.get_rule(GameRules.show_partner_score)) {
+                else if (player !== p && manager.current_game.get_rule(enums_1.GameRules.show_partner_score)) {
                     showScore = true;
                 }
                 return {
@@ -294,8 +266,8 @@ var Manager = /** @class */ (function () {
                 };
             });
             game = __assign(__assign({}, this.current_game.state), { moves: this.current_game.rewritten_moves.filter(function (m) {
-                    return m.player_index === player.index || _this.current_game.get_rule(GameRules.show_partner_moves);
-                }), payoffs: this.current_game.get_rule(GameRules.show_partner_payoff) ?
+                    return m.player_index === player.index || _this.current_game.get_rule(enums_1.GameRules.show_partner_moves);
+                }), payoffs: this.current_game.get_rule(enums_1.GameRules.show_partner_payoff) ?
                     this.current_game.payoffs : this.current_game.state.payoffs.map(function (po, i) { return i === player.index ? po : null; }), number: this.current_game.index + 1 });
         }
         else {
@@ -403,6 +375,7 @@ var Player = /** @class */ (function (_super) {
     });
     return Player;
 }(ManagerComponent));
+exports.Player = Player;
 /**
  * A Game is a single round of a game theory interaction.
  * It progresses through the GameStages.
@@ -414,60 +387,60 @@ var Game = /** @class */ (function (_super) {
         var _a, _b, _c, _d, _e;
         var _this = _super.call(this, manager) || this;
         _this.active = false;
-        _this.stage = GameStage.Pre_begin;
+        _this.stage = enums_1.GameStage.Pre_begin;
         _this.moves = [];
         _this.payoffs = [];
         _this.resultString = "";
         _this.rules = [
-            new GameRule(GameRules.allow_chat, EnabledStatus.Force_off),
-            new GameRule(GameRules.allow_video, EnabledStatus.Force_on),
-            new GameRule(GameRules.show_description, EnabledStatus.Force_on),
-            new GameRule(GameRules.show_payoff_matrix, (_a = {},
-                _a[GameStage.Pre_begin] = EnabledStatus.Force_off,
-                _a[GameStage.Initial_presentation] = EnabledStatus.Force_on,
-                _a[GameStage.Player_moves_complete] = EnabledStatus.Force_off,
+            new GameRule(enums_1.GameRules.allow_chat, enums_1.EnabledStatus.Force_off),
+            new GameRule(enums_1.GameRules.allow_video, enums_1.EnabledStatus.Force_on),
+            new GameRule(enums_1.GameRules.show_description, enums_1.EnabledStatus.Force_on),
+            new GameRule(enums_1.GameRules.show_payoff_matrix, (_a = {},
+                _a[enums_1.GameStage.Pre_begin] = enums_1.EnabledStatus.Force_off,
+                _a[enums_1.GameStage.Initial_presentation] = enums_1.EnabledStatus.Force_on,
+                _a[enums_1.GameStage.Player_moves_complete] = enums_1.EnabledStatus.Force_off,
                 _a)),
-            new GameRule(GameRules.allow_player_move, (_b = {},
-                _b[GameStage.Pre_begin] = EnabledStatus.Force_off,
-                _b[GameStage.Player_moves_enabled] = EnabledStatus.Force_on,
-                _b[GameStage.Player_moves_complete] = EnabledStatus.Force_off,
+            new GameRule(enums_1.GameRules.allow_player_move, (_b = {},
+                _b[enums_1.GameStage.Pre_begin] = enums_1.EnabledStatus.Force_off,
+                _b[enums_1.GameStage.Player_moves_enabled] = enums_1.EnabledStatus.Force_on,
+                _b[enums_1.GameStage.Player_moves_complete] = enums_1.EnabledStatus.Force_off,
                 _b)),
-            new GameRule(GameRules.show_partner_moves, (_c = {},
-                _c[GameStage.Pre_begin] = EnabledStatus.Force_off,
-                _c[GameStage.Reveal_moves] = EnabledStatus.Force_on,
+            new GameRule(enums_1.GameRules.show_partner_moves, (_c = {},
+                _c[enums_1.GameStage.Pre_begin] = enums_1.EnabledStatus.Force_off,
+                _c[enums_1.GameStage.Reveal_moves] = enums_1.EnabledStatus.Force_on,
                 _c)),
-            new GameRule(GameRules.show_partner_payoff, (_d = {},
-                _d[GameStage.Pre_begin] = EnabledStatus.Force_off,
-                _d[GameStage.Reveal_payoff] = EnabledStatus.Force_on,
+            new GameRule(enums_1.GameRules.show_partner_payoff, (_d = {},
+                _d[enums_1.GameStage.Pre_begin] = enums_1.EnabledStatus.Force_off,
+                _d[enums_1.GameStage.Reveal_payoff] = enums_1.EnabledStatus.Force_on,
                 _d)),
-            new GameRule(GameRules.show_own_score, EnabledStatus.Force_on),
-            new GameRule(GameRules.show_partner_score, EnabledStatus.Force_on),
+            new GameRule(enums_1.GameRules.show_own_score, enums_1.EnabledStatus.Force_on),
+            new GameRule(enums_1.GameRules.show_partner_score, enums_1.EnabledStatus.Force_on),
         ];
         _this.rewrite_rule = function (move, game) { return move; };
         _this.timings = (_e = {},
-            _e[GameStage.Pre_begin] = 100,
-            _e[GameStage.Initial_presentation] = 1000,
-            _e[GameStage.Reveal_moves] = 1000,
-            _e[GameStage.Reveal_payoff] = 1000,
+            _e[enums_1.GameStage.Pre_begin] = 100,
+            _e[enums_1.GameStage.Initial_presentation] = 1000,
+            _e[enums_1.GameStage.Reveal_moves] = 1000,
+            _e[enums_1.GameStage.Reveal_payoff] = 1000,
             _e);
         _this.default_timing = stage_delay_default;
         _this.stage_timestamps = {};
         _this.decision_labels = [{ text: 'cooperate' }, { text: 'defect' }];
         _this.hooks = [
             {
-                stage: GameStage.Pre_begin,
+                stage: enums_1.GameStage.Pre_begin,
                 fun: function (game) {
                     setTimeout(function (game) { return game.advance_stage(); }, game.delay, game);
                 }
             },
             {
-                stage: GameStage.Initial_presentation,
+                stage: enums_1.GameStage.Initial_presentation,
                 fun: function (game) {
                     setTimeout(function (game) { return game.advance_stage(); }, game.delay, game);
                 }
             },
             {
-                stage: GameStage.Player_moves_enabled,
+                stage: enums_1.GameStage.Player_moves_enabled,
                 fun: function (game) {
                     // Set up move listeners for the sockets
                     function do_move(move) {
@@ -503,15 +476,15 @@ var Game = /** @class */ (function (_super) {
                 }
             },
             {
-                stage: GameStage.Player_moves_complete,
+                stage: enums_1.GameStage.Player_moves_complete,
                 fun: function (game) { return game.advance_stage(); }
             },
             {
-                stage: GameStage.Reveal_moves,
+                stage: enums_1.GameStage.Reveal_moves,
                 fun: function (game) { return setTimeout(function (game) { return game.advance_stage(); }, game.delay, game); }
             },
             {
-                stage: GameStage.Reveal_payoff,
+                stage: enums_1.GameStage.Reveal_payoff,
                 fun: function (game) {
                     // Matrix indexed by player move values
                     // Player 2 (index=1) first because P1 is columns and P2 is rows!
@@ -527,11 +500,11 @@ var Game = /** @class */ (function (_super) {
                 }
             },
             {
-                stage: GameStage.End,
+                stage: enums_1.GameStage.End,
                 fun: function (game) { return setTimeout(function (game) { return game.advance_stage(); }, game.delay, game); }
             },
             {
-                stage: GameStage.Cleanup,
+                stage: enums_1.GameStage.Cleanup,
                 fun: function (game) { return game._manager.next_game(); }
             }
         ];
@@ -578,8 +551,8 @@ var Game = /** @class */ (function (_super) {
         var found = false;
         var new_stage;
         if (typeof force_stage === 'undefined') {
-            for (var gamestage in GameStage) {
-                var stage = GameStage[gamestage];
+            for (var gamestage in enums_1.GameStage) {
+                var stage = enums_1.GameStage[gamestage];
                 if (found) {
                     new_stage = stage;
                     break;
@@ -624,7 +597,7 @@ var Game = /** @class */ (function (_super) {
             return this.rules.find(function (r) { return r.name === rule; }).values[this.stage];
         }
         catch (e) {
-            return EnabledStatus.Unset;
+            return enums_1.EnabledStatus.Unset;
         }
     };
     Object.defineProperty(Game.prototype, "index", {

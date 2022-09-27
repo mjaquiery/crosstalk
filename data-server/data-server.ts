@@ -5,12 +5,6 @@ const express = require('express');
 const session = require('express-session');
 const fs = require('fs');
 const path = require('path')
-const https = require('https');
-
-const sshOptions = {
-    key: fs.readFileSync('openvidukey.pem'),
-    cert: fs.readFileSync('openviducert.pem')
-};
 
 const app = express()
 
@@ -23,14 +17,15 @@ app.use(session({
     secret: 'h4ber0453RRie',
     saveUninitialized: true,
     resave: false,
-    cookie: { secure: true }
+    cookie: { secure: process.env.NODE_ENV !== 'test' }
 }))
 
 // middleware to test if authenticated
 function isAuthenticated (req: Express.Request, res: Express.Response, next: Express.NextFunction) {
+
     if (req.session.logged_on) next()
     else {
-        console.debug(`Authentication failed; redirecting to /login`)
+        console.debug(`Authentication failed; redirecting to /login`, req.session)
         res.render('login', { warning: "You must log in to continue." })
     }
 }
@@ -50,7 +45,6 @@ app.post(
                 // regenerate the session, which is good practice to help
                 // guard against forms of session fixation
                 req.session.regenerate(function (err) {
-                    console.debug(`session.regenerate(${err})`)
                     if (err) next(err)
 
                     // store user information in session, typically a user id
@@ -59,6 +53,7 @@ app.post(
                     // save the session before redirection to ensure page
                     // load does not happen before session is saved
                     req.session.save(function (err) {
+                        console.debug(req.session)
                         if (err) return next(err)
                         res.redirect('/')
                     })
@@ -131,7 +126,7 @@ app.get('/', isAuthenticated, function (req: Express.Request, res: Express.Respo
 app.get('/download/:type/:file', isAuthenticated, function (req: Express.Request, res: Express.Response) {
     try {
         const dir = req.params.type === 'data' ?
-            process.env.GAME_DATA : path.join(process.env.VIDEO_DATA, path.parse(req.params.file).name)
+            path.join(process.env.GAME_DATA) : path.join(process.env.VIDEO_DATA, path.parse(req.params.file).name)
         const file = path.join(dir, req.params.file)
         if(path.dirname(file) === dir) res.download(file)
         else throw new Error(`${file} not in ${dir}`)
@@ -141,6 +136,4 @@ app.get('/download/:type/:file', isAuthenticated, function (req: Express.Request
     }
 })
 
-https.createServer(sshOptions, app).listen(8000, () => {
-    console.log('Data server listening on port *:8000')
-})
+module.exports = app
