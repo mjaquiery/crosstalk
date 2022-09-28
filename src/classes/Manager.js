@@ -20,40 +20,43 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     return to.concat(ar || Array.prototype.slice.call(from));
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Player = exports.GameRules = exports.Game = exports.Manager = void 0;
+exports.Manager = exports.player_timeout_delay = void 0;
 var promises_1 = require("node:fs/promises");
 var enums_1 = require("../enums/enums");
-Object.defineProperty(exports, "GameRules", { enumerable: true, get: function () { return enums_1.GameRules; } });
 var Player_1 = require("./Player");
-Object.defineProperty(exports, "Player", { enumerable: true, get: function () { return Player_1.Player; } });
 var Game_1 = require("./Game");
-Object.defineProperty(exports, "Game", { enumerable: true, get: function () { return Game_1.Game; } });
 var VideoManager_1 = require("./VideoManager");
 var log4js = require("log4js");
-var player_timeout_delay = 60000;
+exports.player_timeout_delay = 60000;
 var Manager = /** @class */ (function () {
-    function Manager(server, room_name) {
+    function Manager(server, room_name, props) {
         var _a;
         if (room_name === void 0) { room_name = "game"; }
-        this.server = server;
-        this.players = [];
-        this.games = [];
-        this.id = "".concat(room_name, "_").concat(new Date().getTime().toString());
-        this.name = room_name;
-        log4js.configure({
-            appenders: __assign(__assign({}, log4js.appenders), (_a = {}, _a[this.id] = {
-                type: "file",
-                filename: "".concat(process.env.GAME_LOG, "/").concat(this.id, ".log"),
-                // layout: { type: "basic" }
-            }, _a)),
-            categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
-        });
-        var logger = log4js.getLogger(this.id);
-        logger.level = log4js.DEBUG;
-        this.logger = logger;
+        if (props === void 0) { props = {}; }
+        this.server = props.server || server;
+        this.players = props.players || [];
+        this.games = props.games || [];
+        this.id = props.id || "".concat(room_name, "_").concat(new Date().getTime().toString());
+        this.name = props.name || room_name;
+        if (!props.logger) {
+            log4js.configure({
+                appenders: __assign(__assign({}, log4js.appenders), (_a = {}, _a[this.id] = {
+                    type: "file",
+                    filename: "".concat(process.env.GAME_LOG, "/").concat(this.id, ".log"),
+                    // layout: { type: "basic" }
+                }, _a)),
+                categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
+            });
+            var logger = log4js.getLogger(this.id);
+            logger.level = log4js.DEBUG;
+            this.logger = logger;
+        }
+        else {
+            this.logger = props.logger;
+        }
         //this.logger = console
         this.logger.debug("Manger initialized.");
-        this.videoManager = new VideoManager_1.VideoManager(this);
+        this.videoManager = props.video_manager || new VideoManager_1.VideoManager(this);
     }
     Manager.prototype.add_player = function (socket, player_name, network_token) {
         var _this = this;
@@ -72,8 +75,8 @@ var Manager = /** @class */ (function () {
             this.logger.debug("Accepted new player: ".concat(player.name, " [").concat(player.index, "]"));
             this.players.push(player);
             this.logger.debug("".concat(player.name, " joined [").concat(player.id, "]"));
-            socket.on('leave', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, player_timeout_delay, _this, player, socket); });
-            socket.on('disconnect', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, player_timeout_delay, _this, player, socket); });
+            socket.on('leave', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, exports.player_timeout_delay, _this, player, socket); });
+            socket.on('disconnect', function () { return setTimeout(function (manager, player, socket) { return manager.remove_player(player, socket); }, exports.player_timeout_delay, _this, player, socket); });
             if (this.players.length === 2) {
                 this.next_game();
             }

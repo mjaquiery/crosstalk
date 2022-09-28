@@ -9,9 +9,9 @@ import {VideoManager} from "./VideoManager";
 
 const log4js = require("log4js")
 
-const player_timeout_delay: number = 60000
+export const player_timeout_delay: number = 60000
 
-class Manager {
+export class Manager {
     private server: Server
     players: Player[]
     games: Game[]
@@ -20,32 +20,49 @@ class Manager {
     logger
     private videoManager: VideoManager
 
-    constructor(server: Server, room_name: string = "game") {
-        this.server = server
-        this.players = []
-        this.games = []
-        this.id = `${room_name}_${new Date().getTime().toString()}`
-        this.name = room_name
+    constructor(
+        server: Server,
+        room_name: string = "game",
+        props: {
+            server?: Server,
+            players?: Player[],
+            games?: Game[],
+            id?: string,
+            name?: string,
+            logger?: object,
+            video_manager?: VideoManager
+        } = {}
+    ) {
+        this.server = props.server || server
+        this.players = props.players || []
+        this.games = props.games || []
+        this.id = props.id || `${room_name}_${new Date().getTime().toString()}`
+        this.name = props.name || room_name
 
-        log4js.configure({
-            appenders: {
-                ...log4js.appenders,
-                [this.id]: {
-                    type: "file",
-                    filename: `${process.env.GAME_LOG}/${this.id}.log`,
-                    // layout: { type: "basic" }
-                }
-            },
-            categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
-        });
+        if(!props.logger) {
+            log4js.configure({
+                appenders: {
+                    ...log4js.appenders,
+                    [this.id]: {
+                        type: "file",
+                        filename: `${process.env.GAME_LOG}/${this.id}.log`,
+                        // layout: { type: "basic" }
+                    }
+                },
+                categories: { default: { appenders: [this.id], level: "error", enableCallStack: true } },
+            });
 
-        const logger = log4js.getLogger(this.id);
-        logger.level = log4js.DEBUG
-        this.logger = logger
+            const logger = log4js.getLogger(this.id);
+            logger.level = log4js.DEBUG
+            this.logger = logger
+        } else {
+            this.logger = props.logger
+        }
+
         //this.logger = console
         this.logger.debug(`Manger initialized.`)
 
-        this.videoManager = new VideoManager(this)
+        this.videoManager = props.video_manager || new VideoManager(this)
     }
 
     add_player(socket: Socket, player_name: string, network_token: string) {
@@ -305,5 +322,3 @@ class Manager {
         return this.players.find(p => p.index === index)
     }
 }
-
-export { Manager, Game, GameRules, Player }

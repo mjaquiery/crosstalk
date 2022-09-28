@@ -1,5 +1,5 @@
-import {GameRule, GameRules} from "../classes";
-import {EnabledStatus, GameStage} from "../enums/enums";
+import {GameRule} from "../classes";
+import {EnabledStatus, GameRules, GameStage} from "../enums/enums";
 
 describe('GameRule', function () {
 
