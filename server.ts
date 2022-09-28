@@ -1,15 +1,11 @@
 import {
-    DecisionLabel,
     Game,
     Manager,
-    Move,
     Payoff,
-    PayoffMatrix,
-    PayoffSet,
-    ResultString,
-    RewriteRule
-} from "./src/manager"
+    PayoffSet
+} from "./src"
 import {Server} from "socket.io";
+
 let managers: {[game_name: string]: Manager} = {}
 
 const express = require('express');

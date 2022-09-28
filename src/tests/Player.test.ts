@@ -1,4 +1,4 @@
-import { Player} from "../manager";
+import { Player} from "../classes";
 
 describe('Player', function () {
 

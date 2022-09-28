@@ -1,4 +1,4 @@
-import {Game, GameRules, Player} from "../manager";
+import {Game, GameRules, Player} from "../classes/Manager";
 import {GameStage, EnabledStatus} from "../enums/enums";
 
 export type DecisionLabel = {

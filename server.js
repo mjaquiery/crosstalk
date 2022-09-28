@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-var manager_1 = require("./src/manager");
+var src_1 = require("./src");
 var managers = {};
 var express = require('express');
 var session = require('express-session');
@@ -31,7 +31,7 @@ var io = new socketIO.Server(http, {
 function new_manger(room_name, game_count) {
     if (room_name === void 0) { room_name = "game"; }
     if (game_count === void 0) { game_count = 2; }
-    var manager = new manager_1.Manager(io, room_name);
+    var manager = new src_1.Manager(io, room_name);
     var coop = { value: 2, label: 'Small fine' };
     var betrayed = { value: 0, label: 'Huge sentence' };
     var betrayer = { value: 10, label: 'No punishment' };
@@ -52,7 +52,7 @@ function new_manger(room_name, game_count) {
         resultString: function (p1, p2) { return "\n    <span data-player-index=\"".concat(p1.index, "\">").concat(p1.name, "</span>\n     and \n    <span data-player-index=\"").concat(p2.index, "\">").concat(p2.name, "</span>\n     betray one another"); },
         payoffs: [mutual_defection, mutual_defection]
     };
-    var game = function () { return new manager_1.Game(manager, {
+    var game = function () { return new src_1.Game(manager, {
         name: 'Prisoner\'s dilemma',
         description: "\n    <p>\n        You are sat at a table being interrogated. \n        Across the hall you can see your partner, also being interrogated.\n        You know there isn't much evidence against you; \n        if neither you nor your partner talk, the most you'll get is a small fine.\n    </p>\n    <p>\n        If one of you talks and the other doesn't, \n        whoever talks walks away and lets the other bear a much heavier sentence.\n        If you both talk, though, you're both in for a heavy sentence.\n    </p>\n    ",
         prompt: "\n    <p>\n        The pressure is on. What are you going to do?\n    </p>\n    ",
