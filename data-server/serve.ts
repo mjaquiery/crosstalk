@@ -1,6 +1,6 @@
 const https = require('https');
 const fs = require('fs');
-const app = require('data-server.ts')
+const app = require('./data-server.js')
 
 const sshOptions = {
     key: fs.readFileSync('openvidukey.pem'),

@@ -1,5 +1,6 @@
-import {Game, GameRules, Player} from "../classes/Manager";
-import {GameStage, EnabledStatus} from "../enums/enums";
+import {Game} from "../classes/Game";
+import {Player} from "../classes/Player";
+import {GameStage, GameRules, EnabledStatus} from "../enums/enums";
 
 export type DecisionLabel = {
     text: string,

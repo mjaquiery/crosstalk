@@ -1,6 +1,6 @@
 var https = require('https');
 var fs = require('fs');
-var app = require('data-server.ts');
+var app = require('./data-server.js');
 var sshOptions = {
     key: fs.readFileSync('openvidukey.pem'),
     cert: fs.readFileSync('openviducert.pem')
